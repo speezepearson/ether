@@ -8,7 +8,6 @@ use bevy::{
     },
     sprite::{ColorMaterial, MaterialMesh2dBundle, SpriteBundle},
     time::{Time, Timer, TimerMode},
-    transform::TransformBundle,
 };
 
 const PLAYER_ACCELERATION: f32 = 100.0;

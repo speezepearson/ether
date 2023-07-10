@@ -1,20 +1,23 @@
-use std::{collections::VecDeque, time::Instant};
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
 use bevy::{
     prelude::{
         info, shape, App, Assets, BuildChildren, Bundle, Camera2dBundle, Color, Commands,
-        Component, DefaultPlugins, Entity, Handle, Input, KeyCode, Mesh, Query, Res, ResMut,
-        Resource, Startup, Transform, Update, Vec3, With,
+        Component, DefaultPlugins, Entity, Handle, Input, KeyCode, Mesh, Quat, Query, Res, ResMut,
+        Resource, Startup, Transform, Update, Vec2, Vec3, With,
     },
     sprite::{ColorMaterial, MaterialMesh2dBundle, SpriteBundle},
     time::{Time, Timer, TimerMode},
 };
 
-const PLAYER_ACCELERATION: f32 = 100.0;
+const PLAYER_ACCELERATION: f32 = 200.0;
 const PLAYER_RADIUS: f32 = 50.0;
 const BULLET_RADIUS: f32 = 10.0;
 const SPEED_OF_LIGHT: f32 = 100.0;
-const WAGGLER_PERIOD_SEC: f32 = 5.0;
+const WAGGLER_PERIOD_SEC: f32 = 3.0;
 const WAGGLER_MAX_SPEED: f32 = SPEED_OF_LIGHT * 5.0;
 
 fn main() {
@@ -81,6 +84,8 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
+    let square_mesh = meshes.add(shape::Quad::new(Vec2::new(1.0, 1.0)).into());
+    commands.insert_resource(SquareMesh(square_mesh.clone()));
     let circle_mesh = meshes.add(shape::Circle::default().into());
     commands.insert_resource(CircleMesh(circle_mesh.clone()));
     let velocity_dot_material = materials.add(ColorMaterial::from(Color::rgb(1.0, 0.5, 0.0)));
@@ -105,35 +110,42 @@ fn setup(
         }),
     ));
 
-    let bullet_start_posn = Position {
-        x: Vec3::new(200.0, 0.0, 0.0),
-        ..Position::ZERO
-    };
-    commands.spawn((
-        Bullet,
-        bullet_start_posn,
-        PositionHistory(VecDeque::from([(time.startup(), bullet_start_posn)])),
-        Appearance(MaterialMesh2dBundle {
-            mesh: meshes.add(shape::Circle::default().into()).into(),
-            material: materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 0.0))),
-            transform: Transform {
-                scale: Vec3::new(2.0 * BULLET_RADIUS, 2.0 * BULLET_RADIUS, 0.0),
-                ..Default::default()
-            },
-            ..Default::default()
-        }),
-    ));
+    // let bullet_start_posn = Position {
+    //     x: Vec3::new(200.0, 0.0, 0.0),
+    //     ..Position::ZERO
+    // };
+    // commands.spawn((
+    //     Bullet,
+    //     bullet_start_posn,
+    //     PositionHistory(VecDeque::from([(time.startup(), bullet_start_posn)])),
+    //     Appearance(MaterialMesh2dBundle {
+    //         mesh: meshes.add(shape::Circle::default().into()).into(),
+    //         material: materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 0.0))),
+    //         transform: Transform {
+    //             scale: Vec3::new(2.0 * BULLET_RADIUS, 2.0 * BULLET_RADIUS, 0.0),
+    //             ..Default::default()
+    //         },
+    //         ..Default::default()
+    //     }),
+    // ));
 
-    let waggler_start_posn = Position {
-        x: Vec3::new(0.0, 100.0, 0.0),
-        v: Vec3::new(WAGGLER_MAX_SPEED, 0.0, 0.0),
-        a: Vec3::ZERO,
-    };
+    let waggler_start_posn = waggler_posn(0.0);
     commands.spawn((
         Waggler,
         Bullet,
         waggler_start_posn,
-        PositionHistory(VecDeque::from([(time.startup(), waggler_start_posn)])),
+        PositionHistory(VecDeque::from(
+            (0..1000)
+                .rev()
+                .map(|step| {
+                    let t = step as f32 / 100.0;
+                    (
+                        time.startup() - Duration::from_secs_f32(t),
+                        waggler_posn(-t),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )),
         Appearance(MaterialMesh2dBundle {
             mesh: meshes.add(shape::Circle::default().into()).into(),
             material: materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 0.0))),
@@ -149,16 +161,27 @@ fn setup(
 #[derive(Resource)]
 struct CircleMesh(Handle<Mesh>);
 
-fn waggler_system(time: Res<Time>, mut waggler_query: Query<&mut Position, With<Waggler>>) {
+#[derive(Resource)]
+struct SquareMesh(Handle<Mesh>);
+
+fn waggler_posn(t: f32) -> Position {
     let w = 2.0 * 3.14159 / WAGGLER_PERIOD_SEC;
-    for mut waggler_posn in waggler_query.iter_mut() {
-        let t = time.elapsed().as_secs_f32();
-        // x = (vmax / w) sin(w t)
-        // v = vmax cos(w t)
-        // a = -w vmax sin(w t)
-        waggler_posn.x = Vec3::new((WAGGLER_MAX_SPEED / w) * t.sin(), 100.0, 0.0);
-        waggler_posn.v = Vec3::new(WAGGLER_MAX_SPEED * t.cos(), 0.0, 0.0);
-        waggler_posn.a = Vec3::new(-w * WAGGLER_MAX_SPEED * t.sin(), 0.0, 0.0);
+    // x = (vmax / w) sin(w t)
+    // v = vmax cos(w t)
+    // a = -w vmax sin(w t)
+    Position {
+        x: WAGGLER_MAX_SPEED / w * Vec3::new(t.cos(), t.sin(), 0.0),
+        v: WAGGLER_MAX_SPEED * 1.0 * Vec3::new(-t.sin(), t.cos(), 0.0),
+        a: WAGGLER_MAX_SPEED * -w * Vec3::new(-t.cos(), -t.sin(), 0.0),
+    }
+}
+
+fn waggler_system(time: Res<Time>, mut waggler_query: Query<&mut Position, With<Waggler>>) {
+    for mut waggler in waggler_query.iter_mut() {
+        let x = waggler_posn(time.elapsed().as_secs_f32());
+        waggler.x = x.x;
+        waggler.v = x.v;
+        waggler.a = x.a;
     }
 }
 
@@ -247,7 +270,7 @@ fn collision_system(
     for player_posn in player_query.iter() {
         for bullet_posn in lethal_query.iter() {
             if (player_posn.x - bullet_posn.x).length() < PLAYER_RADIUS + BULLET_RADIUS {
-                info!("Collision!");
+                // info!("Collision!");
             }
         }
     }
@@ -275,14 +298,6 @@ fn tracing_system(
 #[derive(Component)]
 struct Image;
 
-#[derive(Bundle)]
-struct VelocityDot {
-    content: MaterialMesh2dBundle<ColorMaterial>,
-}
-
-#[derive(Component)]
-struct AccelerationDot(MaterialMesh2dBundle<ColorMaterial>);
-
 #[derive(Resource)]
 struct VelocityDotMaterial(Handle<ColorMaterial>);
 
@@ -290,9 +305,8 @@ struct VelocityDotMaterial(Handle<ColorMaterial>);
 struct AccelerationDotMaterial(Handle<ColorMaterial>);
 
 fn vision_system(
-    time: Res<Time>,
-    player_position_query: Query<(&Position, &Appearance), With<Player>>,
-    circle_mesh: Res<CircleMesh>,
+    player_position_query: Query<(&PositionHistory, &Appearance), With<Player>>,
+    square_mesh: Res<SquareMesh>,
     velocity_dot_material: Res<VelocityDotMaterial>,
     acceleration_dot_material: Res<AccelerationDotMaterial>,
     mut object_query: Query<(&PositionHistory, &Appearance)>,
@@ -303,8 +317,8 @@ fn vision_system(
         commands.entity(entity).despawn();
     }
 
-    let now = time.last_update().unwrap_or(time.startup());
-    for (player_position, player_appearance) in player_position_query.iter() {
+    for (player_position_history, player_appearance) in player_position_query.iter() {
+        let (now, player_position) = player_position_history.0.back().unwrap();
         let player_bundle = player_appearance.0.clone();
         commands.spawn((
             Image,
@@ -334,8 +348,7 @@ fn vision_system(
 
                 if (r0 < ct0 && r1 > ct1)
                     || (r0 > ct0 && r1 < ct1)
-                    || dx0.length() < 1.0
-                    || dx1.length() < 1.0
+                    || (t1, x1) == (now, player_position)
                 {
                     let object_bundle = appearance.0.clone();
                     commands
@@ -357,32 +370,48 @@ fn vision_system(
                                     ..object_bundle.clone()
                                 },
                             ));
-                            parent.spawn((
-                                Image,
-                                MaterialMesh2dBundle {
-                                    mesh: circle_mesh.0.clone().into(),
-                                    material: velocity_dot_material.0.clone(),
-                                    transform: Transform {
-                                        translation: 1.0 * x0.v + Vec3::Z,
-                                        scale: Vec3::new(5.0, 5.0, 0.0),
+                            if x0.v.length() > 1.0 {
+                                let theta_v = x0.v.y.atan2(x0.v.x);
+                                let xscale = 0.2 * x0.v.length();
+                                parent.spawn((
+                                    Image,
+                                    MaterialMesh2dBundle {
+                                        mesh: square_mesh.0.clone().into(),
+                                        material: velocity_dot_material.0.clone(),
+                                        transform: Transform {
+                                            scale: Vec3::new(xscale, 1.0, 0.0),
+                                            rotation: Quat::from_rotation_z(theta_v),
+                                            translation: Vec3::new(
+                                                xscale / 2.0 * theta_v.cos(),
+                                                xscale / 2.0 * theta_v.sin(),
+                                                0.0,
+                                            ),
+                                        },
                                         ..Default::default()
                                     },
-                                    ..Default::default()
-                                },
-                            ));
-                            parent.spawn((
-                                Image,
-                                MaterialMesh2dBundle {
-                                    mesh: circle_mesh.0.clone().into(),
-                                    material: acceleration_dot_material.0.clone(),
-                                    transform: Transform {
-                                        translation: 1.0 * x0.a + Vec3::Z,
-                                        scale: Vec3::new(3.0, 3.0, 5.0),
+                                ));
+                            }
+                            if x0.a.length() > 1.0 {
+                                let theta_a = x0.a.y.atan2(x0.a.x);
+                                let xscale = 0.2 * x0.a.length();
+                                parent.spawn((
+                                    Image,
+                                    MaterialMesh2dBundle {
+                                        mesh: square_mesh.0.clone().into(),
+                                        material: acceleration_dot_material.0.clone(),
+                                        transform: Transform {
+                                            scale: Vec3::new(xscale, 1.0, 0.0),
+                                            rotation: Quat::from_rotation_z(theta_a),
+                                            translation: Vec3::new(
+                                                xscale / 2.0 * theta_a.cos(),
+                                                xscale / 2.0 * theta_a.sin(),
+                                                0.0,
+                                            ),
+                                        },
                                         ..Default::default()
                                     },
-                                    ..Default::default()
-                                },
-                            ));
+                                ));
+                            }
                         });
                 }
             }

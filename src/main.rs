@@ -50,6 +50,15 @@ fn add_player(mut commands: Commands) {
     ));
 }
 
+fn is_quit_input(input: &Res<Input<KeyCode>>) -> bool {
+    input.just_pressed(KeyCode::Escape)
+        || ((input.pressed(KeyCode::SuperLeft)
+            || input.pressed(KeyCode::SuperRight)
+            || input.pressed(KeyCode::ControlLeft)
+            || input.pressed(KeyCode::ControlRight))
+            && (input.just_pressed(KeyCode::Q) || input.just_pressed(KeyCode::W)))
+}
+
 /// This system prints 'A' key state
 fn driving_system(
     time: Res<Time>,
@@ -57,6 +66,11 @@ fn driving_system(
     keyboard_input: Res<Input<KeyCode>>,
     mut player_transform_query: Query<(&mut Transform, &mut Velocity), With<Player>>,
 ) {
+    if is_quit_input(&keyboard_input) {
+        info!("Quitting");
+        std::process::exit(0);
+    }
+
     let dt = time.delta();
     if !timer.0.tick(time.delta()).just_finished() {
         return;

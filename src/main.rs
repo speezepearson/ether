@@ -72,7 +72,7 @@ fn driving_system(
     }
 
     let dt = time.delta();
-    if !timer.0.tick(time.delta()).just_finished() {
+    if !timer.0.tick(dt).just_finished() {
         return;
     }
     let acc = PLAYER_ACCELERATION

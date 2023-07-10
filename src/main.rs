@@ -41,7 +41,7 @@ fn main() {
         .add_systems(Update, vision_system)
         .add_systems(Update, debug_vision_system)
         .add_systems(Update, collision_system)
-        .add_systems(Update, waggler_system)
+        .add_systems(Update, planet_system)
         .add_systems(Update, collision_system)
         .add_systems(Update, physics_system)
         .add_systems(Update, driving_system)
@@ -94,10 +94,16 @@ fn setup(
     commands.insert_resource(AccelerationDotMaterial(acceleration_dot_material));
 
     commands.spawn(Camera2dBundle::default());
+
+    let player_start_posn = Position {
+        x: Vec3::X * -100.0,
+        v: Vec3::ZERO,
+        a: Vec3::ZERO,
+    };
     commands.spawn((
         Player,
-        Position::ZERO,
-        PositionHistory(VecDeque::from([(time.startup(), Position::ZERO)])),
+        player_start_posn,
+        PositionHistory(VecDeque::from([(time.startup(), player_start_posn)])),
         Appearance(MaterialMesh2dBundle {
             mesh: meshes.add(shape::Circle::default().into()).into(),
             material: materials.add(ColorMaterial::from(Color::rgb(0.0, 0.0, 1.0))),
@@ -110,39 +116,17 @@ fn setup(
         }),
     ));
 
-    // let bullet_start_posn = Position {
-    //     x: Vec3::new(200.0, 0.0, 0.0),
-    //     ..Position::ZERO
-    // };
-    // commands.spawn((
-    //     Bullet,
-    //     bullet_start_posn,
-    //     PositionHistory(VecDeque::from([(time.startup(), bullet_start_posn)])),
-    //     Appearance(MaterialMesh2dBundle {
-    //         mesh: meshes.add(shape::Circle::default().into()).into(),
-    //         material: materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 0.0))),
-    //         transform: Transform {
-    //             scale: Vec3::new(2.0 * BULLET_RADIUS, 2.0 * BULLET_RADIUS, 0.0),
-    //             ..Default::default()
-    //         },
-    //         ..Default::default()
-    //     }),
-    // ));
-
-    let waggler_start_posn = waggler_posn(0.0);
+    let planet_start_posn = planet_posn(0.0);
     commands.spawn((
-        Waggler,
+        Planet,
         Bullet,
-        waggler_start_posn,
+        planet_start_posn,
         PositionHistory(VecDeque::from(
             (0..1000)
                 .rev()
                 .map(|step| {
                     let t = step as f32 / 100.0;
-                    (
-                        time.startup() - Duration::from_secs_f32(t),
-                        waggler_posn(-t),
-                    )
+                    (time.startup() - Duration::from_secs_f32(t), planet_posn(-t))
                 })
                 .collect::<Vec<_>>(),
         )),
@@ -164,7 +148,7 @@ struct CircleMesh(Handle<Mesh>);
 #[derive(Resource)]
 struct SquareMesh(Handle<Mesh>);
 
-fn waggler_posn(t: f32) -> Position {
+fn planet_posn(t: f32) -> Position {
     let w = 2.0 * 3.14159 / WAGGLER_PERIOD_SEC;
     // x = (vmax / w) sin(w t)
     // v = vmax cos(w t)
@@ -172,21 +156,21 @@ fn waggler_posn(t: f32) -> Position {
     Position {
         x: WAGGLER_MAX_SPEED / w * Vec3::new(t.cos(), t.sin(), 0.0),
         v: WAGGLER_MAX_SPEED * 1.0 * Vec3::new(-t.sin(), t.cos(), 0.0),
-        a: WAGGLER_MAX_SPEED * -w * Vec3::new(-t.cos(), -t.sin(), 0.0),
+        a: WAGGLER_MAX_SPEED * w * Vec3::new(-t.cos(), -t.sin(), 0.0),
     }
 }
 
-fn waggler_system(time: Res<Time>, mut waggler_query: Query<&mut Position, With<Waggler>>) {
-    for mut waggler in waggler_query.iter_mut() {
-        let x = waggler_posn(time.elapsed().as_secs_f32());
-        waggler.x = x.x;
-        waggler.v = x.v;
-        waggler.a = x.a;
+fn planet_system(time: Res<Time>, mut planet_query: Query<&mut Position, With<Planet>>) {
+    for mut planet in planet_query.iter_mut() {
+        let x = planet_posn(time.elapsed().as_secs_f32());
+        planet.x = x.x;
+        planet.v = x.v;
+        planet.a = x.a;
     }
 }
 
 #[derive(Component)]
-struct Waggler;
+struct Planet;
 
 fn is_quit_input(input: &Res<Input<KeyCode>>) -> bool {
     input.just_pressed(KeyCode::Escape)
@@ -332,10 +316,11 @@ fn vision_system(
         ));
         for (position_history, appearance) in object_query.iter_mut() {
             // find when, if ever, the object was visible, i.e. when (its distance from player_position) = SPEED_OF_LIGHT*(time ago)
-            for ((t0, x0), (t1, x1)) in position_history
+            for (i, ((t0, x0), (t1, x1))) in position_history
                 .0
                 .iter()
                 .zip(position_history.0.iter().skip(1))
+                .enumerate()
             {
                 let (dx0, dx1) = (player_position.x - x0.x, player_position.x - x1.x);
                 let (r0, r1) = (dx0.length(), dx1.length());
@@ -350,6 +335,17 @@ fn vision_system(
                     || (r0 > ct0 && r1 < ct1)
                     || (t1, x1) == (now, player_position)
                 {
+                    // println!(
+                    //     "{} visible: {} {} {} {} {} {} {}",
+                    //     i,
+                    //     x0.x,
+                    //     x1.x,
+                    //     r0,
+                    //     r1,
+                    //     ct0,
+                    //     ct1,
+                    //     ct1 - ct0
+                    // );
                     let object_bundle = appearance.0.clone();
                     commands
                         .spawn(SpriteBundle {

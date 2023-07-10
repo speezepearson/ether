@@ -2,18 +2,21 @@ use std::{collections::VecDeque, time::Instant};
 
 use bevy::{
     prelude::{
-        info, shape, App, Assets, Camera2dBundle, Color, Commands, Component, DefaultPlugins,
-        Entity, Input, KeyCode, Mesh, ParamSet, Query, Res, ResMut, Resource, Startup, Transform,
-        Update, Vec3, With,
+        info, shape, App, Assets, BuildChildren, Bundle, Camera2dBundle, Color, Commands,
+        Component, DefaultPlugins, Entity, Handle, Input, KeyCode, Mesh, Query, Res, ResMut,
+        Resource, Startup, Transform, Update, Vec3, With,
     },
-    sprite::{ColorMaterial, MaterialMesh2dBundle},
+    sprite::{ColorMaterial, MaterialMesh2dBundle, SpriteBundle},
     time::{Time, Timer, TimerMode},
+    transform::TransformBundle,
 };
 
-const PLAYER_ACCELERATION: f32 = 30.0;
+const PLAYER_ACCELERATION: f32 = 100.0;
 const PLAYER_RADIUS: f32 = 50.0;
 const BULLET_RADIUS: f32 = 10.0;
 const SPEED_OF_LIGHT: f32 = 100.0;
+const WAGGLER_PERIOD_SEC: f32 = 5.0;
+const WAGGLER_MAX_SPEED: f32 = SPEED_OF_LIGHT * 5.0;
 
 fn main() {
     App::new()
@@ -52,17 +55,23 @@ struct PhysicsTimer(Timer);
 #[derive(Component)]
 struct Player;
 
-#[derive(Component)]
-struct Position(Vec3);
+#[derive(Component, Clone, Copy, PartialEq)]
+struct Position {
+    x: Vec3,
+    v: Vec3,
+    a: Vec3,
+}
+
+impl Position {
+    const ZERO: Position = Position {
+        x: Vec3::ZERO,
+        v: Vec3::ZERO,
+        a: Vec3::ZERO,
+    };
+}
 
 #[derive(Component)]
-struct Velocity(Vec3);
-
-#[derive(Component)]
-struct Acceleration(Vec3);
-
-#[derive(Component)]
-struct PositionHistory(VecDeque<(Instant, Vec3)>);
+struct PositionHistory(VecDeque<(Instant, Position)>);
 
 #[derive(Component)]
 struct Appearance(MaterialMesh2dBundle<ColorMaterial>);
@@ -73,13 +82,18 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
+    let circle_mesh = meshes.add(shape::Circle::default().into());
+    commands.insert_resource(CircleMesh(circle_mesh.clone()));
+    let velocity_dot_material = materials.add(ColorMaterial::from(Color::rgb(1.0, 0.5, 0.0)));
+    commands.insert_resource(VelocityDotMaterial(velocity_dot_material));
+    let acceleration_dot_material = materials.add(ColorMaterial::from(Color::rgb(1.0, 1.0, 1.0)));
+    commands.insert_resource(AccelerationDotMaterial(acceleration_dot_material));
+
     commands.spawn(Camera2dBundle::default());
     commands.spawn((
         Player,
-        Acceleration(Vec3::ZERO),
-        Velocity(Vec3::ZERO),
-        Position(Vec3::ZERO),
-        PositionHistory(VecDeque::from([(time.startup(), Vec3::ZERO)])),
+        Position::ZERO,
+        PositionHistory(VecDeque::from([(time.startup(), Position::ZERO)])),
         Appearance(MaterialMesh2dBundle {
             mesh: meshes.add(shape::Circle::default().into()).into(),
             material: materials.add(ColorMaterial::from(Color::rgb(0.0, 0.0, 1.0))),
@@ -92,13 +106,14 @@ fn setup(
         }),
     ));
 
-    let bullet_posn = Vec3::new(200.0, 0.0, 0.0);
+    let bullet_start_posn = Position {
+        x: Vec3::new(200.0, 0.0, 0.0),
+        ..Position::ZERO
+    };
     commands.spawn((
         Bullet,
-        Acceleration(Vec3::ZERO),
-        Velocity(Vec3::ZERO),
-        Position(bullet_posn),
-        PositionHistory(VecDeque::from([(time.startup(), bullet_posn)])),
+        bullet_start_posn,
+        PositionHistory(VecDeque::from([(time.startup(), bullet_start_posn)])),
         Appearance(MaterialMesh2dBundle {
             mesh: meshes.add(shape::Circle::default().into()).into(),
             material: materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 0.0))),
@@ -110,12 +125,16 @@ fn setup(
         }),
     ));
 
-    let waggler_posn = Vec3::new(0.0, 100.0, 0.0);
+    let waggler_start_posn = Position {
+        x: Vec3::new(0.0, 100.0, 0.0),
+        v: Vec3::new(WAGGLER_MAX_SPEED, 0.0, 0.0),
+        a: Vec3::ZERO,
+    };
     commands.spawn((
         Waggler,
         Bullet,
-        Position(waggler_posn),
-        PositionHistory(VecDeque::from([(time.startup(), waggler_posn)])),
+        waggler_start_posn,
+        PositionHistory(VecDeque::from([(time.startup(), waggler_start_posn)])),
         Appearance(MaterialMesh2dBundle {
             mesh: meshes.add(shape::Circle::default().into()).into(),
             material: materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 0.0))),
@@ -128,10 +147,19 @@ fn setup(
     ));
 }
 
+#[derive(Resource)]
+struct CircleMesh(Handle<Mesh>);
+
 fn waggler_system(time: Res<Time>, mut waggler_query: Query<&mut Position, With<Waggler>>) {
+    let w = 2.0 * 3.14159 / WAGGLER_PERIOD_SEC;
     for mut waggler_posn in waggler_query.iter_mut() {
         let t = time.elapsed().as_secs_f32();
-        waggler_posn.0 = Vec3::new(500.0 * t.sin(), 100.0, 0.0);
+        // x = (vmax / w) sin(w t)
+        // v = vmax cos(w t)
+        // a = -w vmax sin(w t)
+        waggler_posn.x = Vec3::new((WAGGLER_MAX_SPEED / w) * t.sin(), 100.0, 0.0);
+        waggler_posn.v = Vec3::new(WAGGLER_MAX_SPEED * t.cos(), 0.0, 0.0);
+        waggler_posn.a = Vec3::new(-w * WAGGLER_MAX_SPEED * t.sin(), 0.0, 0.0);
     }
 }
 
@@ -157,20 +185,17 @@ fn quit_system(keyboard_input: Res<Input<KeyCode>>) {
 fn physics_system(
     time: Res<Time>,
     mut timer: ResMut<PhysicsTimer>,
-    mut q: ParamSet<(
-        Query<(&mut Velocity, &Acceleration)>,
-        Query<(&mut Position, &Velocity)>,
-    )>,
+    mut posn_query: Query<&mut Position>,
 ) {
     let dt = time.delta();
     if !timer.0.tick(dt).just_finished() {
         return;
     }
-    for (mut velocity, acceleration) in q.p0().iter_mut() {
-        velocity.0 += acceleration.0 * dt.as_secs_f32();
-    }
-    for (mut posn, velocity) in q.p1().iter_mut() {
-        posn.0 += velocity.0 * dt.as_secs_f32();
+    for mut posn in posn_query.iter_mut() {
+        let dv = posn.a * dt.as_secs_f32();
+        let dx = posn.v * dt.as_secs_f32() + 0.5 * posn.a * dt.as_secs_f32() * dt.as_secs_f32();
+        posn.v += dv;
+        posn.x += dx;
     }
 }
 
@@ -179,14 +204,14 @@ fn driving_system(
     time: Res<Time>,
     mut timer: ResMut<DrivingTimer>,
     keyboard_input: Res<Input<KeyCode>>,
-    mut player_transform_query: Query<&mut Acceleration, With<Player>>,
+    mut player_transform_query: Query<&mut Position, With<Player>>,
 ) {
     let dt = time.delta();
     if !timer.0.tick(dt).just_finished() {
         return;
     }
-    for mut acceleration in player_transform_query.iter_mut() {
-        acceleration.0 = PLAYER_ACCELERATION
+    for mut position in player_transform_query.iter_mut() {
+        position.a = PLAYER_ACCELERATION
             * Vec3::new(
                 if keyboard_input.pressed(KeyCode::D) || keyboard_input.pressed(KeyCode::Right) {
                     1.0
@@ -222,7 +247,7 @@ fn collision_system(
 ) {
     for player_posn in player_query.iter() {
         for bullet_posn in lethal_query.iter() {
-            if (player_posn.0 - bullet_posn.0).length() < PLAYER_RADIUS + BULLET_RADIUS {
+            if (player_posn.x - bullet_posn.x).length() < PLAYER_RADIUS + BULLET_RADIUS {
                 info!("Collision!");
             }
         }
@@ -244,16 +269,33 @@ fn tracing_system(
     for (mut position_history, position) in trace_query.iter_mut() {
         position_history
             .0
-            .push_back((time.last_update().unwrap_or(time.startup()), position.0));
+            .push_back((time.last_update().unwrap_or(time.startup()), *position));
     }
 }
 
 #[derive(Component)]
 struct Image;
 
+#[derive(Bundle)]
+struct VelocityDot {
+    content: MaterialMesh2dBundle<ColorMaterial>,
+}
+
+#[derive(Component)]
+struct AccelerationDot(MaterialMesh2dBundle<ColorMaterial>);
+
+#[derive(Resource)]
+struct VelocityDotMaterial(Handle<ColorMaterial>);
+
+#[derive(Resource)]
+struct AccelerationDotMaterial(Handle<ColorMaterial>);
+
 fn vision_system(
     time: Res<Time>,
     player_position_query: Query<(&Position, &Appearance), With<Player>>,
+    circle_mesh: Res<CircleMesh>,
+    velocity_dot_material: Res<VelocityDotMaterial>,
+    acceleration_dot_material: Res<AccelerationDotMaterial>,
     mut object_query: Query<(&PositionHistory, &Appearance)>,
     mut image_entity_query: Query<Entity, With<Image>>,
     mut commands: Commands,
@@ -269,7 +311,7 @@ fn vision_system(
             Image,
             MaterialMesh2dBundle {
                 transform: Transform {
-                    translation: player_position.0,
+                    translation: player_position.x,
                     ..player_bundle.transform
                 },
                 ..player_bundle
@@ -282,7 +324,7 @@ fn vision_system(
                 .iter()
                 .zip(position_history.0.iter().skip(1))
             {
-                let (dx0, dx1) = (player_position.0 - *x0, player_position.0 - *x1);
+                let (dx0, dx1) = (player_position.x - x0.x, player_position.x - x1.x);
                 let (r0, r1) = (dx0.length(), dx1.length());
 
                 let (dt0, dt1) = (now.duration_since(*t0), now.duration_since(*t1));
@@ -291,19 +333,58 @@ fn vision_system(
                     SPEED_OF_LIGHT * dt1.as_secs_f32(),
                 );
 
-                // if it was closer and is now farther away (or vice versa), show it
-                if (r0 < ct0 && r1 > ct1) || (r0 > ct0 && r1 < ct1) {
+                if (r0 < ct0 && r1 > ct1)
+                    || (r0 > ct0 && r1 < ct1)
+                    || dx0.length() < 1.0
+                    || dx1.length() < 1.0
+                {
                     let object_bundle = appearance.0.clone();
-                    commands.spawn((
-                        Image,
-                        MaterialMesh2dBundle {
+                    commands
+                        .spawn(SpriteBundle {
                             transform: Transform {
-                                translation: *x0,
-                                ..object_bundle.transform
+                                translation: x0.x,
+                                ..Default::default()
                             },
-                            ..object_bundle
-                        },
-                    ));
+                            ..Default::default()
+                        })
+                        .with_children(|parent| {
+                            parent.spawn((
+                                Image,
+                                MaterialMesh2dBundle {
+                                    transform: Transform {
+                                        translation: Vec3::ZERO,
+                                        ..object_bundle.transform
+                                    },
+                                    ..object_bundle.clone()
+                                },
+                            ));
+                            parent.spawn((
+                                Image,
+                                MaterialMesh2dBundle {
+                                    mesh: circle_mesh.0.clone().into(),
+                                    material: velocity_dot_material.0.clone(),
+                                    transform: Transform {
+                                        translation: 1.0 * x0.v + Vec3::Z,
+                                        scale: Vec3::new(5.0, 5.0, 0.0),
+                                        ..Default::default()
+                                    },
+                                    ..Default::default()
+                                },
+                            ));
+                            parent.spawn((
+                                Image,
+                                MaterialMesh2dBundle {
+                                    mesh: circle_mesh.0.clone().into(),
+                                    material: acceleration_dot_material.0.clone(),
+                                    transform: Transform {
+                                        translation: 1.0 * x0.a + Vec3::Z,
+                                        scale: Vec3::new(3.0, 3.0, 5.0),
+                                        ..Default::default()
+                                    },
+                                    ..Default::default()
+                                },
+                            ));
+                        });
                 }
             }
         }
@@ -330,7 +411,7 @@ fn debug_vision_system(
             MaterialMesh2dBundle {
                 material: materials.add(ColorMaterial::from(Color::rgba(0.5, 0.5, 0.5, 0.5))),
                 transform: Transform {
-                    translation: position.0,
+                    translation: position.x + Vec3::Z,
                     ..bundle.transform
                 },
                 ..bundle

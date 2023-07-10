@@ -2,14 +2,17 @@ use std::collections::VecDeque;
 
 use bevy::{
     prelude::{
-        info, App, Camera2dBundle, Color, Commands, Component, DefaultPlugins, Input, KeyCode,
-        ParamSet, Query, Res, ResMut, Resource, Startup, Transform, Update, Vec3, With,
+        info, shape, App, Assets, Camera2dBundle, Color, Commands, Component, DefaultPlugins,
+        Input, KeyCode, Mesh, ParamSet, Query, Res, ResMut, Resource, Startup, Transform, Update,
+        Vec3, With,
     },
-    sprite::{Sprite, SpriteBundle},
+    sprite::{ColorMaterial, MaterialMesh2dBundle},
     time::{Time, Timer, TimerMode},
 };
 
 const PLAYER_ACCELERATION: f32 = 30.0;
+const PLAYER_RADIUS: f32 = 50.0;
+const BULLET_RADIUS: f32 = 10.0;
 
 fn main() {
     App::new()
@@ -22,8 +25,9 @@ fn main() {
             0.01,
             TimerMode::Repeating,
         )))
-        .add_systems(Startup, add_player)
+        .add_systems(Startup, setup)
         .add_systems(Update, quit_system)
+        .add_systems(Update, collision_system)
         .add_systems(Update, physics_system)
         .add_systems(Update, driving_system)
         .run();
@@ -47,21 +51,36 @@ struct Acceleration(Vec3);
 #[derive(Component)]
 struct PosnTrace(VecDeque<Vec3>);
 
-fn add_player(mut commands: Commands) {
+fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
     commands.spawn(Camera2dBundle::default());
     commands.spawn((
         Player,
         Acceleration(Vec3::ZERO),
         Velocity(Vec3::ZERO),
         PosnTrace(VecDeque::from([Vec3::ZERO])),
-        SpriteBundle {
+        MaterialMesh2dBundle {
+            mesh: meshes.add(shape::Circle::default().into()).into(),
+            material: materials.add(ColorMaterial::from(Color::rgb(0.0, 0.0, 1.0))),
             transform: Transform {
                 translation: Vec3::ZERO,
-                scale: Vec3::new(100.0, 100.0, 0.0),
+                scale: Vec3::new(2.0 * PLAYER_RADIUS, 2.0 * PLAYER_RADIUS, 0.0),
                 ..Default::default()
             },
-            sprite: Sprite {
-                color: Color::rgb(1.0, 0.0, 0.0),
+            ..Default::default()
+        },
+    ));
+    commands.spawn((
+        Bullet,
+        MaterialMesh2dBundle {
+            mesh: meshes.add(shape::Circle::default().into()).into(),
+            material: materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 0.0))),
+            transform: Transform {
+                translation: Vec3::new(200.0, 0.0, 0.0),
+                scale: Vec3::new(2.0 * BULLET_RADIUS, 2.0 * BULLET_RADIUS, 0.0),
                 ..Default::default()
             },
             ..Default::default()
@@ -141,6 +160,24 @@ fn driving_system(
             )
             .try_normalize()
             .unwrap_or(Vec3::ZERO);
+    }
+}
+
+#[derive(Component)]
+struct Bullet;
+
+fn collision_system(
+    player_query: Query<&Transform, With<Player>>,
+    lethal_query: Query<&Transform, With<Bullet>>,
+) {
+    for player_posn in player_query.iter() {
+        for bullet_posn in lethal_query.iter() {
+            if (player_posn.translation - bullet_posn.translation).length()
+                < PLAYER_RADIUS + BULLET_RADIUS
+            {
+                info!("Collision!");
+            }
+        }
     }
 }
 

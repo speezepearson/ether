@@ -58,7 +58,7 @@ struct PhysicsTimer(Timer);
 #[derive(Component)]
 struct Player;
 
-#[derive(Component, Clone, Copy, PartialEq)]
+#[derive(Component, Clone, Copy, PartialEq, Debug)]
 struct Position {
     x: Vec3,
     v: Vec3,
@@ -289,9 +289,14 @@ fn vision_system(
     mut object_query: Query<(&PositionHistory, &Appearance)>,
     mut image_entity_query: Query<Entity, With<Image>>,
     mut commands: Commands,
+    keyboard_input: Res<Input<KeyCode>>,
 ) {
     for entity in image_entity_query.iter_mut() {
         commands.entity(entity).despawn();
+    }
+
+    if keyboard_input.pressed(KeyCode::ShiftLeft) {
+        println!("\n------------------");
     }
 
     for (player_position_history, player_appearance) in player_position_query.iter() {
@@ -308,8 +313,11 @@ fn vision_system(
             },
         ));
         for (position_history, appearance) in object_query.iter_mut() {
+            if keyboard_input.pressed(KeyCode::ShiftLeft) {
+                println!("");
+            }
             // find when, if ever, the object was visible, i.e. when (its distance from player_position) = SPEED_OF_LIGHT*(time ago)
-            for (_i, ((t0, x0), (t1, x1))) in position_history
+            for (i, ((t0, x0), (t1, x1))) in position_history
                 .0
                 .iter()
                 .zip(position_history.0.iter().skip(1))
@@ -328,17 +336,18 @@ fn vision_system(
                     || (r0 > ct0 && r1 < ct1)
                     || (t1, x1) == (now, player_position)
                 {
-                    // println!(
-                    //     "{} visible: {} {} {} {} {} {} {}",
-                    //     i,
-                    //     x0.x,
-                    //     x1.x,
-                    //     r0,
-                    //     r1,
-                    //     ct0,
-                    //     ct1,
-                    //     ct1 - ct0
-                    // );
+                    if keyboard_input.pressed(KeyCode::ShiftLeft) {
+                        println!(
+                            "step {}: {}-{} visible from {} after {}-{}",
+                            i,
+                            x0.x,
+                            x1.x,
+                            player_position.x,
+                            (*now - *t1).as_secs_f32(),
+                            (*now - *t0).as_secs_f32(),
+                        );
+                    }
+
                     let object_bundle = appearance.0.clone();
                     commands
                         .spawn(SpriteBundle {

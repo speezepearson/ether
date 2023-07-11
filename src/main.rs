@@ -5,9 +5,9 @@ use std::{
 
 use bevy::{
     prelude::{
-        info, shape, App, Assets, BuildChildren, Bundle, Camera2dBundle, Color, Commands,
-        Component, DefaultPlugins, Entity, Handle, Input, KeyCode, Mesh, Quat, Query, Res, ResMut,
-        Resource, Startup, Transform, Update, Vec2, Vec3, With,
+        info, shape, App, Assets, BuildChildren, Camera2dBundle, Color, Commands, Component,
+        DefaultPlugins, Entity, Handle, Input, KeyCode, Mesh, Quat, Query, Res, ResMut, Resource,
+        Startup, Transform, Update, Vec2, Vec3, With,
     },
     sprite::{ColorMaterial, MaterialMesh2dBundle, SpriteBundle},
     time::{Time, Timer, TimerMode},
@@ -63,14 +63,6 @@ struct Position {
     x: Vec3,
     v: Vec3,
     a: Vec3,
-}
-
-impl Position {
-    const ZERO: Position = Position {
-        x: Vec3::ZERO,
-        v: Vec3::ZERO,
-        a: Vec3::ZERO,
-    };
 }
 
 #[derive(Component)]
@@ -317,7 +309,7 @@ fn vision_system(
         ));
         for (position_history, appearance) in object_query.iter_mut() {
             // find when, if ever, the object was visible, i.e. when (its distance from player_position) = SPEED_OF_LIGHT*(time ago)
-            for (i, ((t0, x0), (t1, x1))) in position_history
+            for (_i, ((t0, x0), (t1, x1))) in position_history
                 .0
                 .iter()
                 .zip(position_history.0.iter().skip(1))

@@ -15,6 +15,7 @@ use bevy::{
 
 const PLAYER_ACCELERATION: f32 = 200.0;
 const PLAYER_RADIUS: f32 = 50.0;
+const PLANET_RADIUS: f32 = 10.0;
 const BULLET_RADIUS: f32 = 10.0;
 const SPEED_OF_LIGHT: f32 = 100.0;
 const WAGGLER_PERIOD_SEC: f32 = 3.0;
@@ -134,7 +135,7 @@ fn setup(
             mesh: meshes.add(shape::Circle::default().into()).into(),
             material: materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 0.0))),
             transform: Transform {
-                scale: Vec3::new(2.0 * BULLET_RADIUS, 2.0 * BULLET_RADIUS, 0.0),
+                scale: Vec3::new(2.0 * PLANET_RADIUS, 2.0 * PLANET_RADIUS, 0.0),
                 ..Default::default()
             },
             ..Default::default()

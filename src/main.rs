@@ -6,8 +6,8 @@ use std::{
 use bevy::{
     prelude::{
         info, shape, App, Assets, BuildChildren, Camera2dBundle, Color, Commands, Component,
-        DefaultPlugins, Entity, Handle, Input, KeyCode, Mesh, Quat, Query, Res, ResMut, Resource,
-        Startup, Transform, Update, Vec2, Vec3, With,
+        DefaultPlugins, Entity, Handle, Input, IntoSystemConfigs, KeyCode, Mesh, Quat, Query, Res,
+        ResMut, Resource, Startup, Transform, Update, Vec2, Vec3, With,
     },
     sprite::{ColorMaterial, MaterialMesh2dBundle, SpriteBundle},
     time::{Time, Timer, TimerMode},
@@ -16,7 +16,6 @@ use bevy::{
 const PLAYER_ACCELERATION: f32 = 200.0;
 const PLAYER_RADIUS: f32 = 50.0;
 const PLANET_RADIUS: f32 = 10.0;
-const BULLET_RADIUS: f32 = 10.0;
 const SPEED_OF_LIGHT: f32 = 100.0;
 const WAGGLER_PERIOD_SEC: f32 = 3.0;
 const WAGGLER_MAX_SPEED: f32 = SPEED_OF_LIGHT * 5.0;
@@ -28,24 +27,14 @@ fn main() {
             0.01,
             TimerMode::Repeating,
         )))
-        .insert_resource(PhysicsTimer(Timer::from_seconds(
-            0.01,
-            TimerMode::Repeating,
-        )))
-        .insert_resource(TracingTimer(Timer::from_seconds(
-            0.01,
-            TimerMode::Repeating,
-        )))
+        .insert_resource(PlanetTimer(Timer::from_seconds(0.01, TimerMode::Repeating)))
         .add_systems(Startup, setup)
         .add_systems(Update, quit_system)
-        .add_systems(Update, tracing_system)
         .add_systems(Update, vision_system)
         .add_systems(Update, debug_vision_system)
-        .add_systems(Update, collision_system)
-        .add_systems(Update, planet_system)
-        .add_systems(Update, collision_system)
+        .add_systems(Update, planet_system.before(physics_system))
+        .add_systems(Update, driving_system.before(physics_system))
         .add_systems(Update, physics_system)
-        .add_systems(Update, driving_system)
         .run();
 }
 
@@ -59,14 +48,19 @@ struct PhysicsTimer(Timer);
 struct Player;
 
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
-struct Position {
+struct XVA {
     x: Vec3,
     v: Vec3,
     a: Vec3,
 }
 
 #[derive(Component)]
-struct PositionHistory(VecDeque<(Instant, Position)>);
+struct Trajectory(VecDeque<(Instant, XVA)>);
+
+#[derive(Component)]
+struct Physics {
+    acceleration: Vec3,
+}
 
 #[derive(Component)]
 struct Appearance(MaterialMesh2dBundle<ColorMaterial>);
@@ -88,15 +82,19 @@ fn setup(
 
     commands.spawn(Camera2dBundle::default());
 
-    let player_start_posn = Position {
-        x: Vec3::X * -100.0,
-        v: Vec3::ZERO,
-        a: Vec3::ZERO,
-    };
     commands.spawn((
         Player,
-        player_start_posn,
-        PositionHistory(VecDeque::from([(time.startup(), player_start_posn)])),
+        Physics {
+            acceleration: Vec3::ZERO,
+        },
+        Trajectory(VecDeque::from([(
+            time.startup(),
+            XVA {
+                x: Vec3::X * -100.0,
+                v: Vec3::ZERO,
+                a: Vec3::ZERO,
+            },
+        )])),
         Appearance(MaterialMesh2dBundle {
             mesh: meshes.add(shape::Circle::default().into()).into(),
             material: materials.add(ColorMaterial::from(Color::rgb(0.0, 0.0, 1.0))),
@@ -109,17 +107,15 @@ fn setup(
         }),
     ));
 
-    let planet_start_posn = planet_posn(0.0);
     commands.spawn((
         Planet,
-        Bullet,
-        planet_start_posn,
-        PositionHistory(VecDeque::from(
+        NoPhysics,
+        Trajectory(VecDeque::from(
             (0..1000)
                 .rev()
                 .map(|step| {
                     let t = step as f32 / 100.0;
-                    (time.startup() - Duration::from_secs_f32(t), planet_posn(-t))
+                    (time.startup() - Duration::from_secs_f32(t), planet_xva(-t))
                 })
                 .collect::<Vec<_>>(),
         )),
@@ -141,29 +137,41 @@ struct CircleMesh(Handle<Mesh>);
 #[derive(Resource)]
 struct SquareMesh(Handle<Mesh>);
 
-fn planet_posn(t: f32) -> Position {
+fn planet_xva(t: f32) -> XVA {
     let w = 2.0 * 3.14159 / WAGGLER_PERIOD_SEC;
     // x = (vmax / w) sin(w t)
     // v = vmax cos(w t)
     // a = -w vmax sin(w t)
-    Position {
+    XVA {
         x: WAGGLER_MAX_SPEED / w * Vec3::new(t.cos(), t.sin(), 0.0),
         v: WAGGLER_MAX_SPEED * 1.0 * Vec3::new(-t.sin(), t.cos(), 0.0),
         a: WAGGLER_MAX_SPEED * w * Vec3::new(-t.cos(), -t.sin(), 0.0),
     }
 }
 
-fn planet_system(time: Res<Time>, mut planet_query: Query<&mut Position, With<Planet>>) {
-    for mut planet in planet_query.iter_mut() {
-        let x = planet_posn(time.elapsed().as_secs_f32());
-        planet.x = x.x;
-        planet.v = x.v;
-        planet.a = x.a;
+#[derive(Resource)]
+struct PlanetTimer(Timer);
+
+fn planet_system(
+    time: Res<Time>,
+    mut timer: ResMut<PlanetTimer>,
+    mut planet_query: Query<&mut Trajectory, With<Planet>>,
+) {
+    let dt = time.delta();
+    if !timer.0.tick(dt).just_finished() {
+        return;
+    }
+    for mut traj in planet_query.iter_mut() {
+        let xva = planet_xva(time.elapsed().as_secs_f32());
+        traj.0.push_back((time.startup() + time.elapsed(), xva));
     }
 }
 
 #[derive(Component)]
 struct Planet;
+
+#[derive(Component)]
+struct NoPhysics;
 
 fn is_quit_input(input: &Res<Input<KeyCode>>) -> bool {
     input.just_pressed(KeyCode::Escape)
@@ -181,36 +189,19 @@ fn quit_system(keyboard_input: Res<Input<KeyCode>>) {
     }
 }
 
-fn physics_system(
-    time: Res<Time>,
-    mut timer: ResMut<PhysicsTimer>,
-    mut posn_query: Query<&mut Position>,
-) {
-    let dt = time.delta();
-    if !timer.0.tick(dt).just_finished() {
-        return;
-    }
-    for mut posn in posn_query.iter_mut() {
-        let dv = posn.a * dt.as_secs_f32();
-        let dx = posn.v * dt.as_secs_f32() + 0.5 * posn.a * dt.as_secs_f32() * dt.as_secs_f32();
-        posn.v += dv;
-        posn.x += dx;
-    }
-}
-
 /// This system prints 'A' key state
 fn driving_system(
     time: Res<Time>,
     mut timer: ResMut<DrivingTimer>,
     keyboard_input: Res<Input<KeyCode>>,
-    mut player_transform_query: Query<&mut Position, With<Player>>,
+    mut player_physics_query: Query<&mut Physics, With<Player>>,
 ) {
     let dt = time.delta();
     if !timer.0.tick(dt).just_finished() {
         return;
     }
-    for mut position in player_transform_query.iter_mut() {
-        position.a = PLAYER_ACCELERATION
+    for mut physics in player_physics_query.iter_mut() {
+        physics.acceleration = PLAYER_ACCELERATION
             * Vec3::new(
                 if keyboard_input.pressed(KeyCode::D) || keyboard_input.pressed(KeyCode::Right) {
                     1.0
@@ -237,38 +228,21 @@ fn driving_system(
     }
 }
 
-#[derive(Component)]
-struct Bullet;
-
-fn collision_system(
-    player_query: Query<&Position, With<Player>>,
-    lethal_query: Query<&Position, With<Bullet>>,
-) {
-    for player_posn in player_query.iter() {
-        for bullet_posn in lethal_query.iter() {
-            if (player_posn.x - bullet_posn.x).length() < PLAYER_RADIUS + BULLET_RADIUS {
-                // info!("Collision!");
-            }
-        }
-    }
-}
-
-#[derive(Resource)]
-struct TracingTimer(Timer);
-
-fn tracing_system(
-    time: Res<Time>,
-    mut timer: ResMut<TracingTimer>,
-    mut trace_query: Query<(&mut PositionHistory, &Position)>,
-) {
-    let dt = time.delta();
-    if !timer.0.tick(dt).just_finished() {
-        return;
-    }
-    for (mut position_history, position) in trace_query.iter_mut() {
-        position_history
-            .0
-            .push_back((time.last_update().unwrap_or(time.startup()), *position));
+fn physics_system(time: Res<Time>, mut trajectory_query: Query<(&Physics, &mut Trajectory)>) {
+    let dt = time.delta_seconds();
+    for (physics, mut traj) in trajectory_query.iter_mut() {
+        let (_, last_xva) = traj.0.back().unwrap().to_owned();
+        let dv = physics.acceleration * dt;
+        let dx = last_xva.v * dt + 0.5 * physics.acceleration * dt * dt;
+        let a = physics.acceleration;
+        traj.0.push_back((
+            time.startup() + time.elapsed(),
+            XVA {
+                x: last_xva.x + dx,
+                v: last_xva.v + dv,
+                a: a,
+            },
+        ));
     }
 }
 
@@ -282,11 +256,11 @@ struct VelocityDotMaterial(Handle<ColorMaterial>);
 struct AccelerationDotMaterial(Handle<ColorMaterial>);
 
 fn vision_system(
-    player_position_query: Query<(&PositionHistory, &Appearance), With<Player>>,
+    player_position_query: Query<(&Trajectory, &Appearance), With<Player>>,
     square_mesh: Res<SquareMesh>,
     velocity_dot_material: Res<VelocityDotMaterial>,
     acceleration_dot_material: Res<AccelerationDotMaterial>,
-    mut object_query: Query<(&PositionHistory, &Appearance)>,
+    mut object_query: Query<(&Trajectory, &Appearance)>,
     mut image_entity_query: Query<Entity, With<Image>>,
     mut commands: Commands,
     keyboard_input: Res<Input<KeyCode>>,
@@ -312,17 +286,12 @@ fn vision_system(
                 ..player_bundle
             },
         ));
-        for (position_history, appearance) in object_query.iter_mut() {
+        for (traj, appearance) in object_query.iter_mut() {
             if keyboard_input.pressed(KeyCode::ShiftLeft) {
                 println!("");
             }
             // find when, if ever, the object was visible, i.e. when (its distance from player_position) = SPEED_OF_LIGHT*(time ago)
-            for (i, ((t0, x0), (t1, x1))) in position_history
-                .0
-                .iter()
-                .zip(position_history.0.iter().skip(1))
-                .enumerate()
-            {
+            for (i, ((t0, x0), (t1, x1))) in traj.0.iter().zip(traj.0.iter().skip(1)).enumerate() {
                 let (dx0, dx1) = (player_position.x - x0.x, player_position.x - x1.x);
                 let (r0, r1) = (dx0.length(), dx1.length());
 
@@ -421,7 +390,7 @@ fn vision_system(
 struct DebugImage;
 
 fn debug_vision_system(
-    object_query: Query<(&Position, &Appearance)>,
+    object_query: Query<(&Trajectory, &Appearance)>,
     mut image_entity_query: Query<Entity, With<DebugImage>>,
     mut commands: Commands,
     mut materials: ResMut<Assets<ColorMaterial>>,
@@ -437,7 +406,7 @@ fn debug_vision_system(
             MaterialMesh2dBundle {
                 material: materials.add(ColorMaterial::from(Color::rgba(0.5, 0.5, 0.5, 0.5))),
                 transform: Transform {
-                    translation: position.x + Vec3::Z,
+                    translation: position.0.back().unwrap().1.x + Vec3::Z,
                     ..bundle.transform
                 },
                 ..bundle

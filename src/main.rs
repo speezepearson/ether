@@ -5,9 +5,9 @@ use std::{
 
 use bevy::{
     prelude::{
-        info, shape, App, Assets, BuildChildren, Camera2dBundle, Color, Commands, Component,
-        DefaultPlugins, Entity, Handle, Input, IntoSystemConfigs, KeyCode, Mesh, Quat, Query, Res,
-        ResMut, Resource, Startup, Transform, Update, Vec2, Vec3, With,
+        info, shape, App, Assets, BuildChildren, Camera2d, Camera2dBundle, Color, Commands,
+        Component, DefaultPlugins, Entity, Handle, Input, IntoSystemConfigs, KeyCode, Mesh, Quat,
+        Query, Res, ResMut, Resource, Startup, Transform, Update, Vec2, Vec3, With, Without,
     },
     sprite::{ColorMaterial, MaterialMesh2dBundle, SpriteBundle},
     time::{Time, Timer, TimerMode},
@@ -30,6 +30,7 @@ fn main() {
         .insert_resource(PlanetTimer(Timer::from_seconds(0.01, TimerMode::Repeating)))
         .add_systems(Startup, setup)
         .add_systems(Update, quit_system)
+        .add_systems(Update, camera_follows_player_system)
         .add_systems(Update, vision_system)
         .add_systems(Update, debug_vision_system)
         .add_systems(Update, planet_system.before(physics_system))
@@ -65,6 +66,9 @@ struct Physics {
 #[derive(Component)]
 struct Appearance(MaterialMesh2dBundle<ColorMaterial>);
 
+#[derive(Component)]
+struct PlayerCamera;
+
 fn setup(
     time: Res<Time>,
     mut commands: Commands,
@@ -80,7 +84,7 @@ fn setup(
     let acceleration_dot_material = materials.add(ColorMaterial::from(Color::rgb(1.0, 1.0, 1.0)));
     commands.insert_resource(AccelerationDotMaterial(acceleration_dot_material));
 
-    commands.spawn(Camera2dBundle::default());
+    commands.spawn((Camera2dBundle::default(), PlayerCamera));
 
     commands.spawn((
         Player,
@@ -186,6 +190,20 @@ fn quit_system(keyboard_input: Res<Input<KeyCode>>) {
     if is_quit_input(&keyboard_input) {
         info!("Quitting");
         std::process::exit(0);
+    }
+}
+
+fn camera_follows_player_system(
+    mut camera_query: Query<&mut Transform, With<PlayerCamera>>,
+    player_query: Query<&Trajectory, (With<Player>, Without<Camera2d>)>,
+) {
+    for mut camera_transform in camera_query.iter_mut() {
+        let cx = &mut camera_transform.translation;
+        for player_traj in player_query.iter() {
+            let px = player_traj.0.back().unwrap().1.x;
+            cx.x = px.x;
+            cx.y = px.y;
+        }
     }
 }
 

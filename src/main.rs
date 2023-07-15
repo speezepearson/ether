@@ -4,11 +4,12 @@ use std::{
 };
 
 use bevy::{
+    input::mouse::MouseWheel,
     prelude::{
         info, shape, App, Assets, BuildChildren, Camera, Camera2d, Camera2dBundle, Color, Commands,
-        Component, DefaultPlugins, Entity, GlobalTransform, Handle, Input, IntoSystemConfigs,
-        KeyCode, Mesh, MouseButton, Quat, Query, Res, ResMut, Resource, Startup, Transform, Update,
-        Vec2, Vec3, With, Without,
+        Component, DefaultPlugins, Entity, EventReader, GlobalTransform, Handle, Input,
+        IntoSystemConfigs, KeyCode, Mesh, MouseButton, Quat, Query, Res, ResMut, Resource, Startup,
+        Transform, Update, Vec2, Vec3, With, Without,
     },
     sprite::{ColorMaterial, MaterialMesh2dBundle, SpriteBundle},
     time::{Time, Timer, TimerMode},
@@ -230,11 +231,27 @@ fn controls_system(
     mut player_physics_query: Query<&mut Physics, With<Player>>,
     player_traj_query: Query<&Trajectory, With<Player>>,
     windows_q: Query<&Window>,
+    mut camera_transform_q: Query<&mut Transform, With<PlayerCamera>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    mut scroll_evr: EventReader<MouseWheel>,
 ) {
+    for ev in scroll_evr.iter() {
+        use bevy::input::mouse::MouseScrollUnit;
+        let mut camera_transform = camera_transform_q.single_mut();
+        let movement = match ev.unit {
+            MouseScrollUnit::Line => 0.1,
+            MouseScrollUnit::Pixel => 1.0,
+        };
+        let scale = camera_transform.scale;
+        camera_transform.scale = Vec3::new(
+            (scale.x.ln() + movement * 0.01 * ev.y).exp(),
+            (scale.y.ln() + movement * 0.01 * ev.y).exp(),
+            scale.z,
+        );
+    }
     if mouse_buttons.just_pressed(MouseButton::Left) {
         let click_posn = get_world_cursor_posn(windows_q.single(), camera_q.single());
         let player_posn = player_traj_query.single().0.back().unwrap().1.x;

@@ -77,12 +77,14 @@ fn setup(
 ) {
     let square_mesh = meshes.add(shape::Quad::new(Vec2::new(1.0, 1.0)).into());
     commands.insert_resource(SquareMesh(square_mesh.clone()));
-    let circle_mesh = meshes.add(shape::Circle::default().into());
-    commands.insert_resource(CircleMesh(circle_mesh.clone()));
+    let circle_mesh = CircleMesh(meshes.add(shape::Circle::default().into()));
+    commands.insert_resource(circle_mesh.clone());
     let velocity_dot_material = materials.add(ColorMaterial::from(Color::rgb(1.0, 0.5, 0.0)));
     commands.insert_resource(VelocityDotMaterial(velocity_dot_material));
     let acceleration_dot_material = materials.add(ColorMaterial::from(Color::rgb(1.0, 1.0, 1.0)));
     commands.insert_resource(AccelerationDotMaterial(acceleration_dot_material));
+    let bullet_material = materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 1.0)));
+    commands.insert_resource(BulletMaterial(bullet_material));
 
     commands.spawn((Camera2dBundle::default(), PlayerCamera));
 
@@ -100,7 +102,7 @@ fn setup(
             },
         )])),
         Appearance(MaterialMesh2dBundle {
-            mesh: meshes.add(shape::Circle::default().into()).into(),
+            mesh: circle_mesh.0.clone().into(),
             material: materials.add(ColorMaterial::from(Color::rgb(0.0, 0.0, 1.0))),
             transform: Transform {
                 translation: Vec3::ZERO,
@@ -124,7 +126,7 @@ fn setup(
                 .collect::<Vec<_>>(),
         )),
         Appearance(MaterialMesh2dBundle {
-            mesh: meshes.add(shape::Circle::default().into()).into(),
+            mesh: circle_mesh.0.clone().into(),
             material: materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 0.0))),
             transform: Transform {
                 scale: Vec3::new(2.0 * PLANET_RADIUS, 2.0 * PLANET_RADIUS, 0.0),
@@ -135,8 +137,11 @@ fn setup(
     ));
 }
 
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 struct CircleMesh(Handle<Mesh>);
+
+#[derive(Resource, Clone)]
+struct BulletMaterial(Handle<ColorMaterial>);
 
 #[derive(Resource)]
 struct SquareMesh(Handle<Mesh>);
@@ -234,8 +239,8 @@ fn controls_system(
     mut camera_transform_q: Query<&mut Transform, With<PlayerCamera>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    circle_mesh: Res<CircleMesh>,
+    bullet_material: Res<BulletMaterial>,
     mut scroll_evr: EventReader<MouseWheel>,
 ) {
     for ev in scroll_evr.iter() {
@@ -261,8 +266,8 @@ fn controls_system(
                 acceleration: Vec3::ZERO,
             },
             Appearance(MaterialMesh2dBundle {
-                mesh: meshes.add(shape::Circle::default().into()).into(),
-                material: materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 0.0))),
+                mesh: circle_mesh.0.clone().into(),
+                material: bullet_material.0.clone().into(),
                 transform: Transform {
                     scale: Vec3::new(2.0 * BULLET_RADIUS, 2.0 * BULLET_RADIUS, 0.0),
                     ..Default::default()

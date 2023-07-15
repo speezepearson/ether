@@ -4,7 +4,7 @@ use std::{
 };
 
 use bevy::{
-    input::mouse::MouseWheel,
+    input::mouse::{MouseButtonInput, MouseWheel},
     prelude::{
         info, shape, App, Assets, BuildChildren, Camera, Camera2d, Camera2dBundle, Color, Commands,
         Component, DefaultPlugins, Entity, EventReader, GlobalTransform, Handle, Input,
@@ -20,6 +20,7 @@ const PLAYER_ACCELERATION: f32 = 200.0;
 const PLAYER_RADIUS: f32 = 50.0;
 const PLANET_RADIUS: f32 = 10.0;
 const BULLET_RADIUS: f32 = 5.0;
+const ROCKET_RADIUS: f32 = 5.0;
 const SPEED_OF_LIGHT: f32 = 100.0;
 const WAGGLER_PERIOD_SEC: f32 = 3.0;
 const WAGGLER_MAX_SPEED: f32 = SPEED_OF_LIGHT * 5.0;
@@ -85,6 +86,8 @@ fn setup(
     commands.insert_resource(AccelerationDotMaterial(acceleration_dot_material));
     let bullet_material = materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 1.0)));
     commands.insert_resource(BulletMaterial(bullet_material));
+    let rocket_material = materials.add(ColorMaterial::from(Color::rgb(0.0, 1.0, 1.0)));
+    commands.insert_resource(RocketMaterial(rocket_material));
 
     commands.spawn((Camera2dBundle::default(), PlayerCamera));
 
@@ -142,6 +145,9 @@ struct CircleMesh(Handle<Mesh>);
 
 #[derive(Resource, Clone)]
 struct BulletMaterial(Handle<ColorMaterial>);
+
+#[derive(Resource, Clone)]
+struct RocketMaterial(Handle<ColorMaterial>);
 
 #[derive(Resource)]
 struct SquareMesh(Handle<Mesh>);
@@ -228,20 +234,27 @@ fn get_world_cursor_posn(window: &Window, camera: (&Camera, &GlobalTransform)) -
 #[derive(Component)]
 struct Bullet;
 
+#[derive(Component)]
+struct Rocket;
+
 /// This system prints 'A' key state
 fn controls_system(
     time: Res<Time>,
     keyboard_input: Res<Input<KeyCode>>,
-    mouse_buttons: Res<Input<MouseButton>>,
+    mut scroll_evr: EventReader<MouseWheel>,
+    mut click_evr: EventReader<MouseButtonInput>,
+
     mut player_physics_query: Query<&mut Physics, With<Player>>,
     player_traj_query: Query<&Trajectory, With<Player>>,
+
     windows_q: Query<&Window>,
     mut camera_transform_q: Query<&mut Transform, With<PlayerCamera>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
+
     mut commands: Commands,
     circle_mesh: Res<CircleMesh>,
     bullet_material: Res<BulletMaterial>,
-    mut scroll_evr: EventReader<MouseWheel>,
+    rocket_material: Res<RocketMaterial>,
 ) {
     for ev in scroll_evr.iter() {
         use bevy::input::mouse::MouseScrollUnit;
@@ -257,34 +270,60 @@ fn controls_system(
             scale.z,
         );
     }
-    if mouse_buttons.just_pressed(MouseButton::Left) {
+    for ev in click_evr.iter() {
         let click_posn = get_world_cursor_posn(windows_q.single(), camera_q.single());
-        let player_posn = player_traj_query.single().0.back().unwrap().1.x;
-        commands.spawn((
-            Bullet,
-            Physics {
-                acceleration: Vec3::ZERO,
-            },
-            Appearance(MaterialMesh2dBundle {
-                mesh: circle_mesh.0.clone().into(),
-                material: bullet_material.0.clone().into(),
-                transform: Transform {
-                    scale: Vec3::new(2.0 * BULLET_RADIUS, 2.0 * BULLET_RADIUS, 0.0),
+        let player_xva = player_traj_query.single().0.back().unwrap().1;
+        let click_dir = (click_posn - player_xva.x).normalize();
+
+        if ev.button == MouseButton::Left && ev.state.is_pressed() {
+            commands.spawn((
+                Bullet,
+                Physics {
+                    acceleration: Vec3::ZERO,
+                },
+                Appearance(MaterialMesh2dBundle {
+                    mesh: circle_mesh.0.clone().into(),
+                    material: bullet_material.0.clone().into(),
+                    transform: Transform {
+                        scale: Vec3::new(2.0 * BULLET_RADIUS, 2.0 * BULLET_RADIUS, 0.0),
+                        ..Default::default()
+                    },
                     ..Default::default()
+                }),
+                Trajectory(VecDeque::from([(
+                    time.last_update().unwrap_or(time.startup()),
+                    XVA {
+                        x: player_xva.x + click_dir * (PLAYER_RADIUS + BULLET_RADIUS + 10.0),
+                        v: SPEED_OF_LIGHT * click_dir,
+                        a: Vec3::ZERO,
+                    },
+                )])),
+            ));
+        } else if ev.button == MouseButton::Right && ev.state.is_pressed() {
+            commands.spawn((
+                Rocket,
+                Physics {
+                    acceleration: Vec3::ZERO,
                 },
-                ..Default::default()
-            }),
-            Trajectory(VecDeque::from([(
-                time.last_update().unwrap_or(time.startup()),
-                XVA {
-                    x: player_posn
-                        + (click_posn - player_posn).normalize()
-                            * (PLAYER_RADIUS + BULLET_RADIUS + 10.0),
-                    v: SPEED_OF_LIGHT * (click_posn - player_posn).normalize(),
-                    a: Vec3::ZERO,
-                },
-            )])),
-        ));
+                Appearance(MaterialMesh2dBundle {
+                    mesh: circle_mesh.0.clone().into(),
+                    material: rocket_material.0.clone().into(),
+                    transform: Transform {
+                        scale: Vec3::new(2.0 * ROCKET_RADIUS, 2.0 * ROCKET_RADIUS, 0.0),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                Trajectory(VecDeque::from([(
+                    time.last_update().unwrap_or(time.startup()),
+                    XVA {
+                        x: player_xva.x + click_dir * (PLAYER_RADIUS + ROCKET_RADIUS + 10.0),
+                        v: player_xva.v + click_dir * 0.8 * SPEED_OF_LIGHT,
+                        a: Vec3::ZERO,
+                    },
+                )])),
+            ));
+        }
     }
     for mut physics in player_physics_query.iter_mut() {
         physics.acceleration = PLAYER_ACCELERATION

@@ -5,17 +5,20 @@ use std::{
 
 use bevy::{
     prelude::{
-        info, shape, App, Assets, BuildChildren, Camera2d, Camera2dBundle, Color, Commands,
-        Component, DefaultPlugins, Entity, Handle, Input, IntoSystemConfigs, KeyCode, Mesh, Quat,
-        Query, Res, ResMut, Resource, Startup, Transform, Update, Vec2, Vec3, With, Without,
+        info, shape, App, Assets, BuildChildren, Camera, Camera2d, Camera2dBundle, Color, Commands,
+        Component, DefaultPlugins, Entity, GlobalTransform, Handle, Input, IntoSystemConfigs,
+        KeyCode, Mesh, MouseButton, Quat, Query, Res, ResMut, Resource, Startup, Transform, Update,
+        Vec2, Vec3, With, Without,
     },
     sprite::{ColorMaterial, MaterialMesh2dBundle, SpriteBundle},
     time::{Time, Timer, TimerMode},
+    window::Window,
 };
 
 const PLAYER_ACCELERATION: f32 = 200.0;
 const PLAYER_RADIUS: f32 = 50.0;
 const PLANET_RADIUS: f32 = 10.0;
+const BULLET_RADIUS: f32 = 5.0;
 const SPEED_OF_LIGHT: f32 = 100.0;
 const WAGGLER_PERIOD_SEC: f32 = 3.0;
 const WAGGLER_MAX_SPEED: f32 = SPEED_OF_LIGHT * 5.0;
@@ -23,10 +26,6 @@ const WAGGLER_MAX_SPEED: f32 = SPEED_OF_LIGHT * 5.0;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .insert_resource(DrivingTimer(Timer::from_seconds(
-            0.01,
-            TimerMode::Repeating,
-        )))
         .insert_resource(PlanetTimer(Timer::from_seconds(0.01, TimerMode::Repeating)))
         .add_systems(Startup, setup)
         .add_systems(Update, quit_system)
@@ -34,7 +33,7 @@ fn main() {
         .add_systems(Update, vision_system)
         .add_systems(Update, debug_vision_system)
         .add_systems(Update, planet_system.before(physics_system))
-        .add_systems(Update, driving_system.before(physics_system))
+        .add_systems(Update, controls_system.before(physics_system))
         .add_systems(Update, physics_system)
         .run();
 }
@@ -207,16 +206,63 @@ fn camera_follows_player_system(
     }
 }
 
+fn get_world_cursor_posn(window: &Window, camera: (&Camera, &GlobalTransform)) -> Vec3 {
+    let (camera, camera_transform) = camera;
+
+    if let Some(world_position) = window
+        .cursor_position()
+        .and_then(|cursor| camera.viewport_to_world(camera_transform, cursor))
+        .map(|ray| ray.origin.truncate())
+    {
+        return Vec3::new(world_position.x, world_position.y, 0.0);
+    }
+    panic!("No world coords");
+}
+
+#[derive(Component)]
+struct Bullet;
+
 /// This system prints 'A' key state
-fn driving_system(
+fn controls_system(
     time: Res<Time>,
-    mut timer: ResMut<DrivingTimer>,
     keyboard_input: Res<Input<KeyCode>>,
+    mouse_buttons: Res<Input<MouseButton>>,
     mut player_physics_query: Query<&mut Physics, With<Player>>,
+    player_traj_query: Query<&Trajectory, With<Player>>,
+    windows_q: Query<&Window>,
+    camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    let dt = time.delta();
-    if !timer.0.tick(dt).just_finished() {
-        return;
+    if mouse_buttons.just_pressed(MouseButton::Left) {
+        let click_posn = get_world_cursor_posn(windows_q.single(), camera_q.single());
+        let player_posn = player_traj_query.single().0.back().unwrap().1.x;
+        commands.spawn((
+            Bullet,
+            Physics {
+                acceleration: Vec3::ZERO,
+            },
+            Appearance(MaterialMesh2dBundle {
+                mesh: meshes.add(shape::Circle::default().into()).into(),
+                material: materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 0.0))),
+                transform: Transform {
+                    scale: Vec3::new(2.0 * BULLET_RADIUS, 2.0 * BULLET_RADIUS, 0.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            Trajectory(VecDeque::from([(
+                time.last_update().unwrap_or(time.startup()),
+                XVA {
+                    x: player_posn
+                        + (click_posn - player_posn).normalize()
+                            * (PLAYER_RADIUS + BULLET_RADIUS + 10.0),
+                    v: SPEED_OF_LIGHT * (click_posn - player_posn).normalize(),
+                    a: Vec3::ZERO,
+                },
+            )])),
+        ));
     }
     for mut physics in player_physics_query.iter_mut() {
         physics.acceleration = PLAYER_ACCELERATION

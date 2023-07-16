@@ -483,17 +483,16 @@ fn controls_system(
 }
 
 fn physics_system(time: Res<Time>, mut trajectory_query: Query<(&Physics, &mut Trajectory)>) {
-    let dt = time.delta_seconds();
     for (physics, mut traj) in trajectory_query.iter_mut() {
-        let last_xva = traj.current_xva(&time);
+        let (last_t, last_xva) = traj.0.back().unwrap();
+        let now = time.startup() + time.elapsed();
         if physics.acceleration != last_xva.a || physics.acceleration != Vec3::ZERO {
-            let dv = last_xva.a * dt;
-            let dx = last_xva.v * dt + 0.5 * last_xva.a * dt * dt;
+            let new_xv = extrapolate_xva(last_t, last_xva, &now);
             traj.0.push_back((
-                time.startup() + time.elapsed(),
+                now,
                 XVA {
-                    x: last_xva.x + dx,
-                    v: last_xva.v + dv,
+                    x: new_xv.x,
+                    v: new_xv.v,
                     a: physics.acceleration,
                 },
             ));

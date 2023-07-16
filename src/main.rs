@@ -67,6 +67,22 @@ struct XVA {
 #[derive(Component)]
 pub struct Trajectory(VecDeque<(Instant, XVA)>);
 
+impl Trajectory {
+    fn current_xva(&self, time: &Time) -> XVA {
+        let now = time.startup() + time.elapsed();
+        let (last_t, last_xva) = self.0.back().unwrap();
+        extrapolate_xva(last_t, last_xva, &now)
+    }
+}
+
+fn extrapolate_xva(t0: &Instant, xva: &XVA, t1: &Instant) -> XVA {
+    let dt = (*t1 - *t0).as_secs_f32();
+    let x = xva.x + xva.v * dt + xva.a * dt * dt / 2.0;
+    let v = xva.v + xva.a * dt;
+    let a = xva.a;
+    XVA { x, v, a }
+}
+
 #[derive(Component)]
 struct Physics {
     acceleration: Vec3,
@@ -215,13 +231,14 @@ fn quit_system(keyboard_input: Res<Input<KeyCode>>) {
 }
 
 fn camera_follows_player_system(
+    time: Res<Time>,
     mut camera_query: Query<&mut Transform, With<PlayerCamera>>,
     player_query: Query<&Trajectory, (With<Player>, Without<Camera2d>)>,
 ) {
     for mut camera_transform in camera_query.iter_mut() {
         let cx = &mut camera_transform.translation;
         for player_traj in player_query.iter() {
-            let px = player_traj.0.back().unwrap().1.x;
+            let px = player_traj.current_xva(&time).x;
             cx.x = px.x;
             cx.y = px.y;
         }
@@ -276,7 +293,7 @@ mod dust {
         if !timer.0.tick(dt).just_finished() {
             return;
         }
-        let player_posn = player_traj_q.single().0.back().unwrap().1.x;
+        let player_posn = player_traj_q.single().current_xva(&time).x;
 
         let desired_blocks = blocks(
             player_posn.x - 1000.0,
@@ -384,7 +401,7 @@ fn controls_system(
     }
     for ev in click_evr.iter() {
         let click_posn = get_world_cursor_posn(windows_q.single(), camera_q.single());
-        let player_xva = player_traj_query.single().0.back().unwrap().1;
+        let player_xva = player_traj_query.single().current_xva(&time);
         let click_dir = (click_posn - player_xva.x).normalize();
 
         if ev.button == MouseButton::Left && ev.state.is_pressed() {
@@ -468,18 +485,19 @@ fn controls_system(
 fn physics_system(time: Res<Time>, mut trajectory_query: Query<(&Physics, &mut Trajectory)>) {
     let dt = time.delta_seconds();
     for (physics, mut traj) in trajectory_query.iter_mut() {
-        let (_, last_xva) = traj.0.back().unwrap().to_owned();
-        let dv = physics.acceleration * dt;
-        let dx = last_xva.v * dt + 0.5 * physics.acceleration * dt * dt;
-        let a = physics.acceleration;
-        traj.0.push_back((
-            time.startup() + time.elapsed(),
-            XVA {
-                x: last_xva.x + dx,
-                v: last_xva.v + dv,
-                a: a,
-            },
-        ));
+        let last_xva = traj.current_xva(&time);
+        if physics.acceleration != last_xva.a || physics.acceleration != Vec3::ZERO {
+            let dv = last_xva.a * dt;
+            let dx = last_xva.v * dt + 0.5 * last_xva.a * dt * dt;
+            traj.0.push_back((
+                time.startup() + time.elapsed(),
+                XVA {
+                    x: last_xva.x + dx,
+                    v: last_xva.v + dv,
+                    a: physics.acceleration,
+                },
+            ));
+        }
     }
 }
 
@@ -493,6 +511,7 @@ struct VelocityDotMaterial(Handle<ColorMaterial>);
 struct AccelerationDotMaterial(Handle<ColorMaterial>);
 
 fn vision_system(
+    time: Res<Time>,
     player_position_query: Query<(&Trajectory, &Appearance), With<Player>>,
     square_mesh: Res<SquareMesh>,
     velocity_dot_material: Res<VelocityDotMaterial>,
@@ -510,8 +529,9 @@ fn vision_system(
         println!("\n------------------");
     }
 
-    for (player_position_history, player_appearance) in player_position_query.iter() {
-        let (now, player_position) = player_position_history.0.back().unwrap();
+    for (player_traj, player_appearance) in player_position_query.iter() {
+        let now = time.startup() + time.elapsed();
+        let player_position = player_traj.current_xva(&time);
         let player_bundle = player_appearance.0.clone();
         commands.spawn((
             Image,
@@ -538,10 +558,7 @@ fn vision_system(
                     SPEED_OF_LIGHT * dt1.as_secs_f32(),
                 );
 
-                if (r0 < ct0 && r1 > ct1)
-                    || (r0 > ct0 && r1 < ct1)
-                    || (t1, x1) == (now, player_position)
-                {
+                if (r0 < ct0 && r1 > ct1) || (r0 > ct0 && r1 < ct1) {
                     if keyboard_input.pressed(KeyCode::ShiftLeft) {
                         println!(
                             "step {}: {}-{} visible from {} after {}-{}",
@@ -549,16 +566,34 @@ fn vision_system(
                             x0.x,
                             x1.x,
                             player_position.x,
-                            (*now - *t1).as_secs_f32(),
-                            (*now - *t0).as_secs_f32(),
+                            (now - *t1).as_secs_f32(),
+                            (now - *t0).as_secs_f32(),
                         );
                     }
+
+                    let mut min_tv = *t0;
+                    let mut max_tv = *t1;
+                    while (max_tv - min_tv).as_secs_f32() > 0.01 {
+                        let tm =
+                            min_tv + Duration::from_secs_f32((max_tv - min_tv).as_secs_f32() / 2.0);
+                        let xm = extrapolate_xva(t0, x0, &tm);
+                        let dxm = player_position.x - xm.x;
+                        let rm = dxm.length();
+                        let ctm = SPEED_OF_LIGHT * (now - tm).as_secs_f32();
+                        if (r0 < ct0) == (rm < ctm) {
+                            min_tv = tm;
+                        } else {
+                            max_tv = tm;
+                        }
+                    }
+
+                    let xva_v = extrapolate_xva(t0, x0, &min_tv);
 
                     let object_bundle = appearance.0.clone();
                     commands
                         .spawn(SpriteBundle {
                             transform: Transform {
-                                translation: x0.x,
+                                translation: xva_v.x,
                                 ..Default::default()
                             },
                             ..Default::default()
@@ -574,9 +609,9 @@ fn vision_system(
                                     ..object_bundle.clone()
                                 },
                             ));
-                            if x0.v.length() > 1.0 {
-                                let theta_v = x0.v.y.atan2(x0.v.x);
-                                let xscale = 0.2 * x0.v.length();
+                            if xva_v.v.length() > 1.0 {
+                                let theta_v = xva_v.v.y.atan2(xva_v.v.x);
+                                let xscale = 0.2 * xva_v.v.length();
                                 parent.spawn((
                                     Image,
                                     MaterialMesh2dBundle {
@@ -595,9 +630,9 @@ fn vision_system(
                                     },
                                 ));
                             }
-                            if x0.a.length() > 1.0 {
-                                let theta_a = x0.a.y.atan2(x0.a.x);
-                                let xscale = 0.2 * x0.a.length();
+                            if xva_v.a.length() > 1.0 {
+                                let theta_a = xva_v.a.y.atan2(xva_v.a.x);
+                                let xscale = 0.2 * xva_v.a.length();
                                 parent.spawn((
                                     Image,
                                     MaterialMesh2dBundle {
@@ -627,6 +662,7 @@ fn vision_system(
 struct DebugImage;
 
 fn debug_vision_system(
+    time: Res<Time>,
     object_query: Query<(&Trajectory, &Appearance)>,
     mut image_entity_query: Query<Entity, With<DebugImage>>,
     mut commands: Commands,
@@ -643,7 +679,7 @@ fn debug_vision_system(
             MaterialMesh2dBundle {
                 material: materials.add(ColorMaterial::from(Color::rgba(0.5, 0.5, 0.5, 0.5))),
                 transform: Transform {
-                    translation: position.0.back().unwrap().1.x + Vec3::Z,
+                    translation: position.current_xva(&time).x + Vec3::Z,
                     ..bundle.transform
                 },
                 ..bundle

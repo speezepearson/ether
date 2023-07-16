@@ -15,6 +15,9 @@ use bevy::{
     time::{Time, Timer, TimerMode},
     window::Window,
 };
+use rand::Rng;
+use rand::SeedableRng;
+use rand_distr::{Distribution, Poisson};
 
 const PLAYER_ACCELERATION: f32 = 200.0;
 const PLAYER_RADIUS: f32 = 50.0;
@@ -29,8 +32,13 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .insert_resource(PlanetTimer(Timer::from_seconds(0.01, TimerMode::Repeating)))
+        .insert_resource(dust::DustTimer(Timer::from_seconds(
+            0.1,
+            TimerMode::Repeating,
+        )))
         .add_systems(Startup, setup)
         .add_systems(Update, quit_system)
+        .add_systems(Update, dust::dust_system)
         .add_systems(Update, camera_follows_player_system)
         .add_systems(Update, vision_system)
         .add_systems(Update, debug_vision_system)
@@ -47,7 +55,7 @@ struct DrivingTimer(Timer);
 struct PhysicsTimer(Timer);
 
 #[derive(Component)]
-struct Player;
+pub struct Player;
 
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
 struct XVA {
@@ -57,7 +65,7 @@ struct XVA {
 }
 
 #[derive(Component)]
-struct Trajectory(VecDeque<(Instant, XVA)>);
+pub struct Trajectory(VecDeque<(Instant, XVA)>);
 
 #[derive(Component)]
 struct Physics {
@@ -88,6 +96,8 @@ fn setup(
     commands.insert_resource(BulletMaterial(bullet_material));
     let rocket_material = materials.add(ColorMaterial::from(Color::rgb(0.0, 1.0, 1.0)));
     commands.insert_resource(RocketMaterial(rocket_material));
+    let dust_material = materials.add(ColorMaterial::from(Color::rgb(1.0, 1.0, 1.0)));
+    commands.insert_resource(dust::DustMaterial(dust_material));
 
     commands.spawn((Camera2dBundle::default(), PlayerCamera));
 
@@ -141,7 +151,7 @@ fn setup(
 }
 
 #[derive(Resource, Clone)]
-struct CircleMesh(Handle<Mesh>);
+pub struct CircleMesh(Handle<Mesh>);
 
 #[derive(Resource, Clone)]
 struct BulletMaterial(Handle<ColorMaterial>);
@@ -229,6 +239,108 @@ fn get_world_cursor_posn(window: &Window, camera: (&Camera, &GlobalTransform)) -
         return Vec3::new(world_position.x, world_position.y, 0.0);
     }
     panic!("No world coords");
+}
+
+mod dust {
+    use std::collections::HashSet;
+
+    use bevy::prelude::SpatialBundle;
+
+    use super::*;
+
+    #[derive(Component)]
+    pub struct DustSpeck(Vec3);
+
+    #[derive(Component)]
+    pub struct DustBlock(BlockId);
+
+    #[derive(Resource)]
+    pub struct DustMaterial(pub Handle<ColorMaterial>);
+
+    #[derive(Resource)]
+    pub struct DustTimer(pub Timer);
+
+    #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone, Debug)]
+    struct BlockId(i32, i32);
+
+    pub fn dust_system(
+        time: Res<Time>,
+        mut timer: ResMut<DustTimer>,
+        mut commands: Commands,
+        player_traj_q: Query<&Trajectory, With<Player>>,
+        dust_q: Query<(Entity, &DustBlock)>,
+        circle_mesh: Res<CircleMesh>,
+        dust_material: Res<DustMaterial>,
+    ) {
+        let dt = time.delta();
+        if !timer.0.tick(dt).just_finished() {
+            return;
+        }
+        let player_posn = player_traj_q.single().0.back().unwrap().1.x;
+
+        let desired_blocks = blocks(
+            player_posn.x - 1000.0,
+            player_posn.x + 1000.0,
+            player_posn.y - 1000.0,
+            player_posn.y + 1000.0,
+        );
+        let actual_blocks = dust_q.iter().map(|(_, d)| d.0).collect::<HashSet<_>>();
+        dust_q.iter().for_each(|(e, block)| {
+            if !desired_blocks.contains(&block.0) {
+                commands.entity(e).despawn();
+            }
+        });
+        desired_blocks.difference(&actual_blocks).for_each(|block| {
+            commands
+                .spawn((
+                    DustBlock(*block),
+                    SpatialBundle {
+                        transform: Transform {
+                            translation: BLOCK_SIZE as f32
+                                * Vec3::new(block.0 as f32, block.1 as f32, 0.0),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                ))
+                .with_children(|e| {
+                    dust_in_block(-10.0, block).iter().for_each(|(x, y)| {
+                        e.spawn(MaterialMesh2dBundle {
+                            mesh: circle_mesh.0.clone().into(),
+                            material: dust_material.0.clone().into(),
+                            transform: Transform {
+                                translation: BLOCK_SIZE as f32 * Vec3::new(*x, *y, 0.5),
+                                scale: Vec3::new(2.0, 2.0, 0.0),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        });
+                    });
+                });
+        });
+    }
+
+    const BLOCK_SIZE: usize = 1000;
+
+    fn blocks(xmin: f32, xmax: f32, ymin: f32, ymax: f32) -> HashSet<BlockId> {
+        let left = (xmin / BLOCK_SIZE as f32).floor() as i32;
+        let right = (xmax / BLOCK_SIZE as f32).ceil() as i32;
+        let bottom = (ymin / BLOCK_SIZE as f32).floor() as i32;
+        let top = (ymax / BLOCK_SIZE as f32).ceil() as i32;
+        (left..right)
+            .flat_map(|x| (bottom..top).map(move |y| BlockId(x, y)))
+            .collect()
+    }
+
+    fn dust_in_block(ln_density: f32, block: &BlockId) -> Vec<(f32, f32)> {
+        let mut rng = rand::rngs::StdRng::seed_from_u64((6379 * block.0 + block.1) as u64);
+        let num_points = Poisson::new(BLOCK_SIZE.pow(2) as f32 * ln_density.exp())
+            .unwrap()
+            .sample(&mut rng) as usize;
+        (0..num_points)
+            .map(|_| (rng.gen_range(0.0..1.0), rng.gen_range(0.0..1.0)))
+            .collect()
+    }
 }
 
 #[derive(Component)]

@@ -145,15 +145,14 @@ fn setup(
     commands.spawn((
         Planet,
         NoPhysics,
-        Trajectory(VecDeque::from(
-            (0..1000)
-                .rev()
-                .map(|step| {
-                    let t = step as f32 / 100.0;
-                    (time.startup() - Duration::from_secs_f32(t), planet_xva(-t))
-                })
-                .collect::<Vec<_>>(),
-        )),
+        Trajectory(VecDeque::from([(
+            time.startup(),
+            XVA {
+                x: planet_xva(0.0).x,
+                v: Vec3::ZERO,
+                a: Vec3::ZERO,
+            },
+        )])),
         Appearance(MaterialMesh2dBundle {
             mesh: circle_mesh.0.clone().into(),
             material: materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 0.0))),

@@ -546,7 +546,19 @@ fn vision_system(
                 println!("");
             }
             // find when, if ever, the object was visible, i.e. when (its distance from player_position) = SPEED_OF_LIGHT*(time ago)
-            for (i, ((t0, x0), (t1, x1))) in traj.0.iter().zip(traj.0.iter().skip(1)).enumerate() {
+            for (i, ((t0, x0), (t1, x1))) in traj
+                .0
+                .iter()
+                .zip(
+                    traj.0.iter().skip(1).chain(
+                        traj.0
+                            .back()
+                            .map(|(t, xva)| (now, extrapolate_xva(t, xva, &now)))
+                            .iter(),
+                    ),
+                )
+                .enumerate()
+            {
                 let (dx0, dx1) = (player_position.x - x0.x, player_position.x - x1.x);
                 let (r0, r1) = (dx0.length(), dx1.length());
 

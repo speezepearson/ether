@@ -201,10 +201,9 @@ fn planet_system(
     if !timer.0.tick(dt).just_finished() {
         return;
     }
-    for mut traj in planet_query.iter_mut() {
-        let xva = planet_xva(time.elapsed().as_secs_f32());
-        traj.0.push_back((time.startup() + time.elapsed(), xva));
-    }
+    let mut traj = planet_query.single_mut();
+    let xva = planet_xva(time.elapsed().as_secs_f32());
+    traj.0.push_back((time.startup() + time.elapsed(), xva));
 }
 
 #[derive(Component)]
@@ -234,14 +233,12 @@ fn camera_follows_player_system(
     mut camera_query: Query<&mut Transform, With<PlayerCamera>>,
     player_query: Query<&Trajectory, (With<Player>, Without<Camera2d>)>,
 ) {
-    for mut camera_transform in camera_query.iter_mut() {
-        let cx = &mut camera_transform.translation;
-        for player_traj in player_query.iter() {
-            let px = player_traj.current_xva(&time).x;
-            cx.x = px.x;
-            cx.y = px.y;
-        }
-    }
+    let mut camera_transform = camera_query.single_mut();
+    let player_traj = player_query.single();
+    let cx = &mut camera_transform.translation;
+    let px = player_traj.current_xva(&time).x;
+    cx.x = px.x;
+    cx.y = px.y;
 }
 
 fn get_world_cursor_posn(window: &Window, camera: (&Camera, &GlobalTransform)) -> Vec3 {
@@ -453,32 +450,28 @@ fn controls_system(
             ));
         }
     }
-    for mut physics in player_physics_query.iter_mut() {
-        physics.acceleration = PLAYER_ACCELERATION
-            * Vec3::new(
-                if keyboard_input.pressed(KeyCode::D) || keyboard_input.pressed(KeyCode::Right) {
-                    1.0
-                } else if keyboard_input.pressed(KeyCode::A)
-                    || keyboard_input.pressed(KeyCode::Left)
-                {
-                    -1.0
-                } else {
-                    0.0
-                },
-                if keyboard_input.pressed(KeyCode::W) || keyboard_input.pressed(KeyCode::Up) {
-                    1.0
-                } else if keyboard_input.pressed(KeyCode::S)
-                    || keyboard_input.pressed(KeyCode::Down)
-                {
-                    -1.0
-                } else {
-                    0.0
-                },
-                0.0,
-            )
-            .try_normalize()
-            .unwrap_or(Vec3::ZERO);
-    }
+
+    let mut physics = player_physics_query.single_mut();
+    physics.acceleration = PLAYER_ACCELERATION
+        * Vec3::new(
+            if keyboard_input.pressed(KeyCode::D) || keyboard_input.pressed(KeyCode::Right) {
+                1.0
+            } else if keyboard_input.pressed(KeyCode::A) || keyboard_input.pressed(KeyCode::Left) {
+                -1.0
+            } else {
+                0.0
+            },
+            if keyboard_input.pressed(KeyCode::W) || keyboard_input.pressed(KeyCode::Up) {
+                1.0
+            } else if keyboard_input.pressed(KeyCode::S) || keyboard_input.pressed(KeyCode::Down) {
+                -1.0
+            } else {
+                0.0
+            },
+            0.0,
+        )
+        .try_normalize()
+        .unwrap_or(Vec3::ZERO);
 }
 
 fn physics_system(time: Res<Time>, mut trajectory_query: Query<(&Physics, &mut Trajectory)>) {
@@ -527,142 +520,142 @@ fn vision_system(
         println!("\n------------------");
     }
 
-    for (player_traj, player_appearance) in player_position_query.iter() {
-        let now = time.startup() + time.elapsed();
-        let player_position = player_traj.current_xva(&time);
-        let player_bundle = player_appearance.0.clone();
-        commands.spawn((
-            Image,
-            MaterialMesh2dBundle {
-                transform: Transform {
-                    translation: player_position.x,
-                    ..player_bundle.transform
-                },
-                ..player_bundle
+    let (player_traj, player_appearance) = player_position_query.single();
+
+    let now = time.startup() + time.elapsed();
+    let player_position = player_traj.current_xva(&time);
+    let player_bundle = player_appearance.0.clone();
+    commands.spawn((
+        Image,
+        MaterialMesh2dBundle {
+            transform: Transform {
+                translation: player_position.x,
+                ..player_bundle.transform
             },
-        ));
-        for (traj, appearance) in object_query.iter_mut() {
-            if keyboard_input.pressed(KeyCode::ShiftLeft) {
-                println!("");
-            }
-            // find when, if ever, the object was visible, i.e. when (its distance from player_position) = SPEED_OF_LIGHT*(time ago)
-            for (i, ((t0, x0), (t1, x1))) in traj
-                .0
-                .iter()
-                .zip(
-                    traj.0.iter().skip(1).chain(
-                        traj.0
-                            .back()
-                            .map(|(t, xva)| (now, extrapolate_xva(t, xva, &now)))
-                            .iter(),
-                    ),
-                )
-                .enumerate()
-            {
-                let (dx0, dx1) = (player_position.x - x0.x, player_position.x - x1.x);
-                let (r0, r1) = (dx0.length(), dx1.length());
+            ..player_bundle
+        },
+    ));
+    for (traj, appearance) in object_query.iter_mut() {
+        if keyboard_input.pressed(KeyCode::ShiftLeft) {
+            println!("");
+        }
+        // find when, if ever, the object was visible, i.e. when (its distance from player_position) = SPEED_OF_LIGHT*(time ago)
+        for (i, ((t0, x0), (t1, x1))) in traj
+            .0
+            .iter()
+            .zip(
+                traj.0.iter().skip(1).chain(
+                    traj.0
+                        .back()
+                        .map(|(t, xva)| (now, extrapolate_xva(t, xva, &now)))
+                        .iter(),
+                ),
+            )
+            .enumerate()
+        {
+            let (dx0, dx1) = (player_position.x - x0.x, player_position.x - x1.x);
+            let (r0, r1) = (dx0.length(), dx1.length());
 
-                let (dt0, dt1) = (now.duration_since(*t0), now.duration_since(*t1));
-                let (ct0, ct1) = (
-                    SPEED_OF_LIGHT * dt0.as_secs_f32(),
-                    SPEED_OF_LIGHT * dt1.as_secs_f32(),
-                );
+            let (dt0, dt1) = (now.duration_since(*t0), now.duration_since(*t1));
+            let (ct0, ct1) = (
+                SPEED_OF_LIGHT * dt0.as_secs_f32(),
+                SPEED_OF_LIGHT * dt1.as_secs_f32(),
+            );
 
-                if (r0 < ct0 && r1 > ct1) || (r0 > ct0 && r1 < ct1) {
-                    if keyboard_input.pressed(KeyCode::ShiftLeft) {
-                        println!(
-                            "step {}: {}-{} visible from {} after {}-{}",
-                            i,
-                            x0.x,
-                            x1.x,
-                            player_position.x,
-                            (now - *t1).as_secs_f32(),
-                            (now - *t0).as_secs_f32(),
-                        );
+            if (r0 < ct0 && r1 > ct1) || (r0 > ct0 && r1 < ct1) {
+                if keyboard_input.pressed(KeyCode::ShiftLeft) {
+                    println!(
+                        "step {}: {}-{} visible from {} after {}-{}",
+                        i,
+                        x0.x,
+                        x1.x,
+                        player_position.x,
+                        (now - *t1).as_secs_f32(),
+                        (now - *t0).as_secs_f32(),
+                    );
+                }
+
+                let mut min_tv = *t0;
+                let mut max_tv = *t1;
+                while (max_tv - min_tv).as_secs_f32() > 0.01 {
+                    let tm =
+                        min_tv + Duration::from_secs_f32((max_tv - min_tv).as_secs_f32() / 2.0);
+                    let xm = extrapolate_xva(t0, x0, &tm);
+                    let dxm = player_position.x - xm.x;
+                    let rm = dxm.length();
+                    let ctm = SPEED_OF_LIGHT * (now - tm).as_secs_f32();
+                    if (r0 < ct0) == (rm < ctm) {
+                        min_tv = tm;
+                    } else {
+                        max_tv = tm;
                     }
+                }
 
-                    let mut min_tv = *t0;
-                    let mut max_tv = *t1;
-                    while (max_tv - min_tv).as_secs_f32() > 0.01 {
-                        let tm =
-                            min_tv + Duration::from_secs_f32((max_tv - min_tv).as_secs_f32() / 2.0);
-                        let xm = extrapolate_xva(t0, x0, &tm);
-                        let dxm = player_position.x - xm.x;
-                        let rm = dxm.length();
-                        let ctm = SPEED_OF_LIGHT * (now - tm).as_secs_f32();
-                        if (r0 < ct0) == (rm < ctm) {
-                            min_tv = tm;
-                        } else {
-                            max_tv = tm;
-                        }
-                    }
+                let xva_v = extrapolate_xva(t0, x0, &min_tv);
 
-                    let xva_v = extrapolate_xva(t0, x0, &min_tv);
-
-                    let object_bundle = appearance.0.clone();
-                    commands
-                        .spawn(SpriteBundle {
-                            transform: Transform {
-                                translation: xva_v.x,
-                                ..Default::default()
-                            },
+                let object_bundle = appearance.0.clone();
+                commands
+                    .spawn(SpriteBundle {
+                        transform: Transform {
+                            translation: xva_v.x,
                             ..Default::default()
-                        })
-                        .with_children(|parent| {
+                        },
+                        ..Default::default()
+                    })
+                    .with_children(|parent| {
+                        parent.spawn((
+                            Image,
+                            MaterialMesh2dBundle {
+                                transform: Transform {
+                                    translation: Vec3::ZERO,
+                                    ..object_bundle.transform
+                                },
+                                ..object_bundle.clone()
+                            },
+                        ));
+                        if xva_v.v.length() > 1.0 {
+                            let theta_v = xva_v.v.y.atan2(xva_v.v.x);
+                            let xscale = 0.2 * xva_v.v.length();
                             parent.spawn((
                                 Image,
                                 MaterialMesh2dBundle {
+                                    mesh: square_mesh.0.clone().into(),
+                                    material: velocity_dot_material.0.clone(),
                                     transform: Transform {
-                                        translation: Vec3::ZERO,
-                                        ..object_bundle.transform
+                                        scale: Vec3::new(xscale, 1.0, 0.0),
+                                        rotation: Quat::from_rotation_z(theta_v),
+                                        translation: Vec3::new(
+                                            xscale / 2.0 * theta_v.cos(),
+                                            xscale / 2.0 * theta_v.sin(),
+                                            0.0,
+                                        ),
                                     },
-                                    ..object_bundle.clone()
+                                    ..Default::default()
                                 },
                             ));
-                            if xva_v.v.length() > 1.0 {
-                                let theta_v = xva_v.v.y.atan2(xva_v.v.x);
-                                let xscale = 0.2 * xva_v.v.length();
-                                parent.spawn((
-                                    Image,
-                                    MaterialMesh2dBundle {
-                                        mesh: square_mesh.0.clone().into(),
-                                        material: velocity_dot_material.0.clone(),
-                                        transform: Transform {
-                                            scale: Vec3::new(xscale, 1.0, 0.0),
-                                            rotation: Quat::from_rotation_z(theta_v),
-                                            translation: Vec3::new(
-                                                xscale / 2.0 * theta_v.cos(),
-                                                xscale / 2.0 * theta_v.sin(),
-                                                0.0,
-                                            ),
-                                        },
-                                        ..Default::default()
+                        }
+                        if xva_v.a.length() > 1.0 {
+                            let theta_a = xva_v.a.y.atan2(xva_v.a.x);
+                            let xscale = 0.2 * xva_v.a.length();
+                            parent.spawn((
+                                Image,
+                                MaterialMesh2dBundle {
+                                    mesh: square_mesh.0.clone().into(),
+                                    material: acceleration_dot_material.0.clone(),
+                                    transform: Transform {
+                                        scale: Vec3::new(xscale, 1.0, 0.0),
+                                        rotation: Quat::from_rotation_z(theta_a),
+                                        translation: Vec3::new(
+                                            xscale / 2.0 * theta_a.cos(),
+                                            xscale / 2.0 * theta_a.sin(),
+                                            0.0,
+                                        ),
                                     },
-                                ));
-                            }
-                            if xva_v.a.length() > 1.0 {
-                                let theta_a = xva_v.a.y.atan2(xva_v.a.x);
-                                let xscale = 0.2 * xva_v.a.length();
-                                parent.spawn((
-                                    Image,
-                                    MaterialMesh2dBundle {
-                                        mesh: square_mesh.0.clone().into(),
-                                        material: acceleration_dot_material.0.clone(),
-                                        transform: Transform {
-                                            scale: Vec3::new(xscale, 1.0, 0.0),
-                                            rotation: Quat::from_rotation_z(theta_a),
-                                            translation: Vec3::new(
-                                                xscale / 2.0 * theta_a.cos(),
-                                                xscale / 2.0 * theta_a.sin(),
-                                                0.0,
-                                            ),
-                                        },
-                                        ..Default::default()
-                                    },
-                                ));
-                            }
-                        });
-                }
+                                    ..Default::default()
+                                },
+                            ));
+                        }
+                    });
             }
         }
     }

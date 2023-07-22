@@ -58,29 +58,27 @@ struct PhysicsTimer(Timer);
 pub struct Player;
 
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
-struct XVA {
+struct XV {
     x: Vec3,
     v: Vec3,
-    a: Vec3,
 }
 
 #[derive(Component)]
-pub struct Trajectory(VecDeque<(Instant, XVA)>);
+pub struct Trajectory(VecDeque<(Instant, XV)>);
 
 impl Trajectory {
-    fn current_xva(&self, time: &Time) -> XVA {
+    fn current_xv(&self, time: &Time) -> XV {
         let now = time.startup() + time.elapsed();
-        let (last_t, last_xva) = self.0.back().unwrap();
-        extrapolate_xva(last_t, last_xva, &now)
+        let (last_t, last_xv) = self.0.back().unwrap();
+        extrapolate_xv(last_t, last_xv, &now)
     }
 }
 
-fn extrapolate_xva(t0: &Instant, xva: &XVA, t1: &Instant) -> XVA {
+fn extrapolate_xv(t0: &Instant, xv: &XV, t1: &Instant) -> XV {
     let dt = (*t1 - *t0).as_secs_f32();
-    let x = xva.x + xva.v * dt + xva.a * dt * dt / 2.0;
-    let v = xva.v + xva.a * dt;
-    let a = xva.a;
-    XVA { x, v, a }
+    let x = xv.x + xv.v * dt;
+    let v = xv.v;
+    XV { x, v }
 }
 
 #[derive(Component)]
@@ -106,8 +104,6 @@ fn setup(
     commands.insert_resource(circle_mesh.clone());
     let velocity_dot_material = materials.add(ColorMaterial::from(Color::rgb(1.0, 0.5, 0.0)));
     commands.insert_resource(VelocityDotMaterial(velocity_dot_material));
-    let acceleration_dot_material = materials.add(ColorMaterial::from(Color::rgb(1.0, 1.0, 1.0)));
-    commands.insert_resource(AccelerationDotMaterial(acceleration_dot_material));
     let bullet_material = materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 1.0)));
     commands.insert_resource(BulletMaterial(bullet_material));
     let rocket_material = materials.add(ColorMaterial::from(Color::rgb(0.0, 1.0, 1.0)));
@@ -124,10 +120,9 @@ fn setup(
         },
         Trajectory(VecDeque::from([(
             time.startup(),
-            XVA {
+            XV {
                 x: Vec3::X * -100.0,
                 v: Vec3::ZERO,
-                a: Vec3::ZERO,
             },
         )])),
         Appearance(MaterialMesh2dBundle {
@@ -147,10 +142,9 @@ fn setup(
         NoPhysics,
         Trajectory(VecDeque::from([(
             time.startup(),
-            XVA {
-                x: planet_xva(0.0).x,
+            XV {
+                x: planet_xv(0.0).x,
                 v: Vec3::ZERO,
-                a: Vec3::ZERO,
             },
         )])),
         Appearance(MaterialMesh2dBundle {
@@ -177,15 +171,14 @@ struct RocketMaterial(Handle<ColorMaterial>);
 #[derive(Resource)]
 struct SquareMesh(Handle<Mesh>);
 
-fn planet_xva(t: f32) -> XVA {
+fn planet_xv(t: f32) -> XV {
     let w = 2.0 * 3.14159 / WAGGLER_PERIOD_SEC;
     // x = (vmax / w) sin(w t)
     // v = vmax cos(w t)
     // a = -w vmax sin(w t)
-    XVA {
+    XV {
         x: WAGGLER_MAX_SPEED / w * Vec3::new(t.cos(), t.sin(), 0.0),
         v: WAGGLER_MAX_SPEED * 1.0 * Vec3::new(-t.sin(), t.cos(), 0.0),
-        a: WAGGLER_MAX_SPEED * w * Vec3::new(-t.cos(), -t.sin(), 0.0),
     }
 }
 
@@ -202,8 +195,8 @@ fn planet_system(
         return;
     }
     let mut traj = planet_q.single_mut();
-    let xva = planet_xva(time.elapsed().as_secs_f32());
-    traj.0.push_back((time.startup() + time.elapsed(), xva));
+    let xv = planet_xv(time.elapsed().as_secs_f32());
+    traj.0.push_back((time.startup() + time.elapsed(), xv));
 }
 
 #[derive(Component)]
@@ -236,7 +229,7 @@ fn camera_follows_player_system(
     let mut camera_transform = camera_q.single_mut();
     let player_traj = player_q.single();
     let cx = &mut camera_transform.translation;
-    let px = player_traj.current_xva(&time).x;
+    let px = player_traj.current_xv(&time).x;
     cx.x = px.x;
     cx.y = px.y;
 }
@@ -289,7 +282,7 @@ mod dust {
         if !timer.0.tick(dt).just_finished() {
             return;
         }
-        let player_posn = player_traj_q.single().current_xva(&time).x;
+        let player_posn = player_traj_q.single().current_xv(&time).x;
 
         let desired_blocks = blocks(
             player_posn.x - 1000.0,
@@ -397,8 +390,8 @@ fn controls_system(
     }
     for ev in click_evr.iter() {
         let click_posn = get_world_cursor_posn(windows_q.single(), camera_q.single());
-        let player_xva = player_traj_q.single().current_xva(&time);
-        let click_dir = (click_posn - player_xva.x).normalize();
+        let player_xv = player_traj_q.single().current_xv(&time);
+        let click_dir = (click_posn - player_xv.x).normalize();
 
         if ev.button == MouseButton::Left && ev.state.is_pressed() {
             commands.spawn((
@@ -417,10 +410,9 @@ fn controls_system(
                 }),
                 Trajectory(VecDeque::from([(
                     time.last_update().unwrap_or(time.startup()),
-                    XVA {
-                        x: player_xva.x + click_dir * (PLAYER_RADIUS + BULLET_RADIUS + 10.0),
+                    XV {
+                        x: player_xv.x + click_dir * (PLAYER_RADIUS + BULLET_RADIUS + 10.0),
                         v: SPEED_OF_LIGHT * click_dir,
-                        a: Vec3::ZERO,
                     },
                 )])),
             ));
@@ -441,10 +433,9 @@ fn controls_system(
                 }),
                 Trajectory(VecDeque::from([(
                     time.last_update().unwrap_or(time.startup()),
-                    XVA {
-                        x: player_xva.x + click_dir * (PLAYER_RADIUS + ROCKET_RADIUS + 10.0),
-                        v: player_xva.v + click_dir * 0.8 * SPEED_OF_LIGHT,
-                        a: Vec3::ZERO,
+                    XV {
+                        x: player_xv.x + click_dir * (PLAYER_RADIUS + ROCKET_RADIUS + 10.0),
+                        v: player_xv.v + click_dir * 0.8 * SPEED_OF_LIGHT,
                     },
                 )])),
             ));
@@ -476,16 +467,15 @@ fn controls_system(
 
 fn physics_system(time: Res<Time>, mut trajectory_q: Query<(&Physics, &mut Trajectory)>) {
     for (physics, mut traj) in trajectory_q.iter_mut() {
-        let (last_t, last_xva) = traj.0.back().unwrap();
+        let (last_t, last_xv) = traj.0.back().unwrap();
         let now = time.startup() + time.elapsed();
-        if physics.acceleration != last_xva.a || physics.acceleration != Vec3::ZERO {
-            let new_xv = extrapolate_xva(last_t, last_xva, &now);
+        if physics.acceleration != Vec3::ZERO {
+            let new_xv = extrapolate_xv(last_t, last_xv, &now);
             traj.0.push_back((
                 now,
-                XVA {
+                XV {
                     x: new_xv.x,
-                    v: new_xv.v,
-                    a: physics.acceleration,
+                    v: new_xv.v + time.delta_seconds() * physics.acceleration,
                 },
             ));
         }
@@ -506,7 +496,6 @@ fn vision_system(
     player_position_q: Query<(&Trajectory, &Appearance), With<Player>>,
     square_mesh: Res<SquareMesh>,
     velocity_dot_material: Res<VelocityDotMaterial>,
-    acceleration_dot_material: Res<AccelerationDotMaterial>,
     mut object_q: Query<(&Trajectory, &Appearance)>,
     mut image_entity_q: Query<Entity, With<Image>>,
     mut commands: Commands,
@@ -523,7 +512,7 @@ fn vision_system(
     let (player_traj, player_appearance) = player_position_q.single();
 
     let now = time.startup() + time.elapsed();
-    let player_position = player_traj.current_xva(&time);
+    let player_position = player_traj.current_xv(&time);
     let player_bundle = player_appearance.0.clone();
     commands.spawn((
         Image,
@@ -547,7 +536,7 @@ fn vision_system(
                 traj.0.iter().skip(1).chain(
                     traj.0
                         .back()
-                        .map(|(t, xva)| (now, extrapolate_xva(t, xva, &now)))
+                        .map(|(t, xv)| (now, extrapolate_xv(t, xv, &now)))
                         .iter(),
                 ),
             )
@@ -580,7 +569,7 @@ fn vision_system(
                 while (max_tv - min_tv).as_secs_f32() > 0.01 {
                     let tm =
                         min_tv + Duration::from_secs_f32((max_tv - min_tv).as_secs_f32() / 2.0);
-                    let xm = extrapolate_xva(t0, x0, &tm);
+                    let xm = extrapolate_xv(t0, x0, &tm);
                     let dxm = player_position.x - xm.x;
                     let rm = dxm.length();
                     let ctm = SPEED_OF_LIGHT * (now - tm).as_secs_f32();
@@ -591,13 +580,13 @@ fn vision_system(
                     }
                 }
 
-                let image_xva = extrapolate_xva(t0, x0, &min_tv);
+                let image_xv = extrapolate_xv(t0, x0, &min_tv);
 
                 let object_bundle = appearance.0.clone();
                 commands
                     .spawn(SpriteBundle {
                         transform: Transform {
-                            translation: image_xva.x,
+                            translation: image_xv.x,
                             ..Default::default()
                         },
                         ..Default::default()
@@ -613,16 +602,10 @@ fn vision_system(
                                 ..object_bundle.clone()
                             },
                         ));
-                        if image_xva.v.length() > 1.0 {
+                        if image_xv.v.length() > 1.0 {
                             parent.spawn((
                                 Image,
-                                make_line(image_xva.v, &square_mesh, &velocity_dot_material.0),
-                            ));
-                        }
-                        if image_xva.a.length() > 1.0 {
-                            parent.spawn((
-                                Image,
-                                make_line(image_xva.a, &square_mesh, &acceleration_dot_material.0),
+                                make_line(image_xv.v, &square_mesh, &velocity_dot_material.0),
                             ));
                         }
                     });
@@ -671,7 +654,7 @@ fn debug_vision_system(
             MaterialMesh2dBundle {
                 material: materials.add(ColorMaterial::from(Color::rgba(0.5, 0.5, 0.5, 0.5))),
                 transform: Transform {
-                    translation: position.current_xva(&time).x + Vec3::Z,
+                    translation: position.current_xv(&time).x + Vec3::Z,
                     ..bundle.transform
                 },
                 ..bundle

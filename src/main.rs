@@ -614,50 +614,39 @@ fn vision_system(
                             },
                         ));
                         if image_xva.v.length() > 1.0 {
-                            let theta_v = image_xva.v.y.atan2(image_xva.v.x);
-                            let xscale = 0.2 * image_xva.v.length();
                             parent.spawn((
                                 Image,
-                                MaterialMesh2dBundle {
-                                    mesh: square_mesh.0.clone().into(),
-                                    material: velocity_dot_material.0.clone(),
-                                    transform: Transform {
-                                        scale: Vec3::new(xscale, 1.0, 0.0),
-                                        rotation: Quat::from_rotation_z(theta_v),
-                                        translation: Vec3::new(
-                                            xscale / 2.0 * theta_v.cos(),
-                                            xscale / 2.0 * theta_v.sin(),
-                                            0.0,
-                                        ),
-                                    },
-                                    ..Default::default()
-                                },
+                                make_line(image_xva.v, &square_mesh, &velocity_dot_material.0),
                             ));
                         }
                         if image_xva.a.length() > 1.0 {
-                            let theta_a = image_xva.a.y.atan2(image_xva.a.x);
-                            let xscale = 0.2 * image_xva.a.length();
                             parent.spawn((
                                 Image,
-                                MaterialMesh2dBundle {
-                                    mesh: square_mesh.0.clone().into(),
-                                    material: acceleration_dot_material.0.clone(),
-                                    transform: Transform {
-                                        scale: Vec3::new(xscale, 1.0, 0.0),
-                                        rotation: Quat::from_rotation_z(theta_a),
-                                        translation: Vec3::new(
-                                            xscale / 2.0 * theta_a.cos(),
-                                            xscale / 2.0 * theta_a.sin(),
-                                            0.0,
-                                        ),
-                                    },
-                                    ..Default::default()
-                                },
+                                make_line(image_xva.a, &square_mesh, &acceleration_dot_material.0),
                             ));
                         }
                     });
             }
         }
+    }
+}
+
+fn make_line(
+    vec: Vec3,
+    square_mesh: &SquareMesh,
+    material: &Handle<ColorMaterial>,
+) -> MaterialMesh2dBundle<ColorMaterial> {
+    let theta = vec.y.atan2(vec.x);
+    let xscale = 0.2 * vec.length();
+    MaterialMesh2dBundle {
+        mesh: square_mesh.0.clone().into(),
+        material: material.clone(),
+        transform: Transform {
+            scale: Vec3::new(xscale, 1.0, 0.0),
+            rotation: Quat::from_rotation_z(theta),
+            translation: Vec3::new(xscale / 2.0 * theta.cos(), xscale / 2.0 * theta.sin(), 0.0),
+        },
+        ..Default::default()
     }
 }
 

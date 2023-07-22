@@ -195,13 +195,13 @@ struct PlanetTimer(Timer);
 fn planet_system(
     time: Res<Time>,
     mut timer: ResMut<PlanetTimer>,
-    mut planet_query: Query<&mut Trajectory, With<Planet>>,
+    mut planet_q: Query<&mut Trajectory, With<Planet>>,
 ) {
     let dt = time.delta();
     if !timer.0.tick(dt).just_finished() {
         return;
     }
-    let mut traj = planet_query.single_mut();
+    let mut traj = planet_q.single_mut();
     let xva = planet_xva(time.elapsed().as_secs_f32());
     traj.0.push_back((time.startup() + time.elapsed(), xva));
 }
@@ -230,11 +230,11 @@ fn quit_system(keyboard_input: Res<Input<KeyCode>>) {
 
 fn camera_follows_player_system(
     time: Res<Time>,
-    mut camera_query: Query<&mut Transform, With<PlayerCamera>>,
-    player_query: Query<&Trajectory, (With<Player>, Without<Camera2d>)>,
+    mut camera_q: Query<&mut Transform, With<PlayerCamera>>,
+    player_q: Query<&Trajectory, (With<Player>, Without<Camera2d>)>,
 ) {
-    let mut camera_transform = camera_query.single_mut();
-    let player_traj = player_query.single();
+    let mut camera_transform = camera_q.single_mut();
+    let player_traj = player_q.single();
     let cx = &mut camera_transform.translation;
     let px = player_traj.current_xva(&time).x;
     cx.x = px.x;
@@ -369,8 +369,8 @@ fn controls_system(
     mut scroll_evr: EventReader<MouseWheel>,
     mut click_evr: EventReader<MouseButtonInput>,
 
-    mut player_physics_query: Query<&mut Physics, With<Player>>,
-    player_traj_query: Query<&Trajectory, With<Player>>,
+    mut player_physics_q: Query<&mut Physics, With<Player>>,
+    player_traj_q: Query<&Trajectory, With<Player>>,
 
     windows_q: Query<&Window>,
     mut camera_transform_q: Query<&mut Transform, With<PlayerCamera>>,
@@ -397,7 +397,7 @@ fn controls_system(
     }
     for ev in click_evr.iter() {
         let click_posn = get_world_cursor_posn(windows_q.single(), camera_q.single());
-        let player_xva = player_traj_query.single().current_xva(&time);
+        let player_xva = player_traj_q.single().current_xva(&time);
         let click_dir = (click_posn - player_xva.x).normalize();
 
         if ev.button == MouseButton::Left && ev.state.is_pressed() {
@@ -451,7 +451,7 @@ fn controls_system(
         }
     }
 
-    let mut physics = player_physics_query.single_mut();
+    let mut physics = player_physics_q.single_mut();
     physics.acceleration = PLAYER_ACCELERATION
         * Vec3::new(
             if keyboard_input.pressed(KeyCode::D) || keyboard_input.pressed(KeyCode::Right) {
@@ -474,8 +474,8 @@ fn controls_system(
         .unwrap_or(Vec3::ZERO);
 }
 
-fn physics_system(time: Res<Time>, mut trajectory_query: Query<(&Physics, &mut Trajectory)>) {
-    for (physics, mut traj) in trajectory_query.iter_mut() {
+fn physics_system(time: Res<Time>, mut trajectory_q: Query<(&Physics, &mut Trajectory)>) {
+    for (physics, mut traj) in trajectory_q.iter_mut() {
         let (last_t, last_xva) = traj.0.back().unwrap();
         let now = time.startup() + time.elapsed();
         if physics.acceleration != last_xva.a || physics.acceleration != Vec3::ZERO {
@@ -503,16 +503,16 @@ struct AccelerationDotMaterial(Handle<ColorMaterial>);
 
 fn vision_system(
     time: Res<Time>,
-    player_position_query: Query<(&Trajectory, &Appearance), With<Player>>,
+    player_position_q: Query<(&Trajectory, &Appearance), With<Player>>,
     square_mesh: Res<SquareMesh>,
     velocity_dot_material: Res<VelocityDotMaterial>,
     acceleration_dot_material: Res<AccelerationDotMaterial>,
-    mut object_query: Query<(&Trajectory, &Appearance)>,
-    mut image_entity_query: Query<Entity, With<Image>>,
+    mut object_q: Query<(&Trajectory, &Appearance)>,
+    mut image_entity_q: Query<Entity, With<Image>>,
     mut commands: Commands,
     keyboard_input: Res<Input<KeyCode>>,
 ) {
-    for entity in image_entity_query.iter_mut() {
+    for entity in image_entity_q.iter_mut() {
         commands.entity(entity).despawn();
     }
 
@@ -520,7 +520,7 @@ fn vision_system(
         println!("\n------------------");
     }
 
-    let (player_traj, player_appearance) = player_position_query.single();
+    let (player_traj, player_appearance) = player_position_q.single();
 
     let now = time.startup() + time.elapsed();
     let player_position = player_traj.current_xva(&time);
@@ -535,7 +535,7 @@ fn vision_system(
             ..player_bundle
         },
     ));
-    for (traj, appearance) in object_query.iter_mut() {
+    for (traj, appearance) in object_q.iter_mut() {
         if keyboard_input.pressed(KeyCode::ShiftLeft) {
             println!("");
         }
@@ -655,16 +655,16 @@ struct DebugImage;
 
 fn debug_vision_system(
     time: Res<Time>,
-    object_query: Query<(&Trajectory, &Appearance)>,
-    mut image_entity_query: Query<Entity, With<DebugImage>>,
+    object_q: Query<(&Trajectory, &Appearance)>,
+    mut image_entity_q: Query<Entity, With<DebugImage>>,
     mut commands: Commands,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    for entity in image_entity_query.iter_mut() {
+    for entity in image_entity_q.iter_mut() {
         commands.entity(entity).despawn();
     }
 
-    for (position, appearance) in object_query.iter() {
+    for (position, appearance) in object_q.iter() {
         let bundle = appearance.0.clone();
         commands.spawn((
             DebugImage,

@@ -591,13 +591,13 @@ fn vision_system(
                     }
                 }
 
-                let xva_v = extrapolate_xva(t0, x0, &min_tv);
+                let image_xva = extrapolate_xva(t0, x0, &min_tv);
 
                 let object_bundle = appearance.0.clone();
                 commands
                     .spawn(SpriteBundle {
                         transform: Transform {
-                            translation: xva_v.x,
+                            translation: image_xva.x,
                             ..Default::default()
                         },
                         ..Default::default()
@@ -613,9 +613,9 @@ fn vision_system(
                                 ..object_bundle.clone()
                             },
                         ));
-                        if xva_v.v.length() > 1.0 {
-                            let theta_v = xva_v.v.y.atan2(xva_v.v.x);
-                            let xscale = 0.2 * xva_v.v.length();
+                        if image_xva.v.length() > 1.0 {
+                            let theta_v = image_xva.v.y.atan2(image_xva.v.x);
+                            let xscale = 0.2 * image_xva.v.length();
                             parent.spawn((
                                 Image,
                                 MaterialMesh2dBundle {
@@ -634,9 +634,9 @@ fn vision_system(
                                 },
                             ));
                         }
-                        if xva_v.a.length() > 1.0 {
-                            let theta_a = xva_v.a.y.atan2(xva_v.a.x);
-                            let xscale = 0.2 * xva_v.a.length();
+                        if image_xva.a.length() > 1.0 {
+                            let theta_a = image_xva.a.y.atan2(image_xva.a.x);
+                            let xscale = 0.2 * image_xva.a.length();
                             parent.spawn((
                                 Image,
                                 MaterialMesh2dBundle {

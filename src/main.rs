@@ -512,13 +512,13 @@ fn vision_system(
     let (player_traj, player_appearance) = player_position_q.single();
 
     let now = time.startup() + time.elapsed();
-    let player_position = player_traj.current_xv(&time);
+    let player_xv = player_traj.current_xv(&time);
     let player_bundle = player_appearance.0.clone();
     commands.spawn((
         Image,
         MaterialMesh2dBundle {
             transform: Transform {
-                translation: player_position.x,
+                translation: player_xv.x,
                 ..player_bundle.transform
             },
             ..player_bundle
@@ -542,7 +542,7 @@ fn vision_system(
             )
             .enumerate()
         {
-            let (dx0, dx1) = (player_position.x - x0.x, player_position.x - x1.x);
+            let (dx0, dx1) = (player_xv.x - x0.x, player_xv.x - x1.x);
             let (r0, r1) = (dx0.length(), dx1.length());
 
             let (dt0, dt1) = (now.duration_since(*t0), now.duration_since(*t1));
@@ -558,7 +558,7 @@ fn vision_system(
                         i,
                         x0.x,
                         x1.x,
-                        player_position.x,
+                        player_xv.x,
                         (now - *t1).as_secs_f32(),
                         (now - *t0).as_secs_f32(),
                     );
@@ -570,7 +570,7 @@ fn vision_system(
                     let tm =
                         min_tv + Duration::from_secs_f32((max_tv - min_tv).as_secs_f32() / 2.0);
                     let xm = extrapolate_xv(t0, x0, &tm);
-                    let dxm = player_position.x - xm.x;
+                    let dxm = player_xv.x - xm.x;
                     let rm = dxm.length();
                     let ctm = SPEED_OF_LIGHT * (now - tm).as_secs_f32();
                     if (r0 < ct0) == (rm < ctm) {

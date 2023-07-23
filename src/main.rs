@@ -1,7 +1,7 @@
 mod core;
 mod vision;
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, f64::consts::PI};
 
 use bevy::{
     input::mouse::{MouseButtonInput, MouseWheel},
@@ -89,7 +89,7 @@ fn setup(
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     let square_mesh = meshes.add(shape::Quad::new(Vec2::new(1.0, 1.0)).into());
-    commands.insert_resource(SquareMesh(square_mesh.clone()));
+    commands.insert_resource(SquareMesh(square_mesh));
     let circle_mesh = CircleMesh(meshes.add(shape::Circle::default().into()));
     commands.insert_resource(circle_mesh.clone());
     let velocity_dot_material = materials.add(ColorMaterial::from(Color::rgb(1.0, 0.5, 0.0)));
@@ -138,7 +138,7 @@ fn setup(
             },
         )])),
         Appearance(MaterialMesh2dBundle {
-            mesh: circle_mesh.0.clone().into(),
+            mesh: circle_mesh.0.into(),
             material: materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 0.0))),
             transform: Transform {
                 scale: Vec3::new(2.0 * PLANET_RADIUS as f32, 2.0 * PLANET_RADIUS as f32, 0.0),
@@ -162,7 +162,7 @@ struct RocketMaterial(Handle<ColorMaterial>);
 struct SquareMesh(Handle<Mesh>);
 
 fn planet_xv(t: f64) -> XV {
-    let w = 2.0 * 3.14159 / WAGGLER_PERIOD_SEC;
+    let w = 2.0 * PI / WAGGLER_PERIOD_SEC;
     // x = (vmax / w) sin(w t)
     // v = vmax cos(w t)
     // a = -w vmax sin(w t)
@@ -303,7 +303,7 @@ mod dust {
                     dust_in_block(-10.0, block).iter().for_each(|(x, y)| {
                         e.spawn(MaterialMesh2dBundle {
                             mesh: circle_mesh.0.clone().into(),
-                            material: dust_material.0.clone().into(),
+                            material: dust_material.0.clone(),
                             transform: Transform {
                                 translation: BLOCK_SIZE as f32
                                     * Vec3::new(*x as f32, *y as f32, 0.5),
@@ -346,7 +346,7 @@ struct Bullet;
 #[derive(Component)]
 struct Rocket;
 
-/// This system prints 'A' key state
+#[allow(clippy::too_many_arguments)]
 fn controls_system(
     time: Res<Time>,
     keyboard_input: Res<Input<KeyCode>>,
@@ -392,7 +392,7 @@ fn controls_system(
                 },
                 Appearance(MaterialMesh2dBundle {
                     mesh: circle_mesh.0.clone().into(),
-                    material: bullet_material.0.clone().into(),
+                    material: bullet_material.0.clone(),
                     transform: Transform {
                         scale: Vec3::new(
                             2.0 * BULLET_RADIUS as f32,
@@ -419,7 +419,7 @@ fn controls_system(
                 },
                 Appearance(MaterialMesh2dBundle {
                     mesh: circle_mesh.0.clone().into(),
-                    material: rocket_material.0.clone().into(),
+                    material: rocket_material.0.clone(),
                     transform: Transform {
                         scale: Vec3::new(
                             2.0 * ROCKET_RADIUS as f32,
@@ -490,6 +490,7 @@ struct VelocityDotMaterial(Handle<ColorMaterial>);
 #[derive(Resource)]
 struct AccelerationDotMaterial(Handle<ColorMaterial>);
 
+#[allow(clippy::too_many_arguments)]
 fn vision_system(
     time: Res<Time>,
     player_position_q: Query<(&Trajectory, &Appearance), With<Player>>,
@@ -525,7 +526,7 @@ fn vision_system(
     ));
     for (traj, appearance) in object_q.iter_mut() {
         if keyboard_input.pressed(KeyCode::ShiftLeft) {
-            println!("");
+            println!();
         }
 
         for image in find_images(player_xv.x, now, &traj.0) {

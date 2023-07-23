@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::f64::consts::PI;
 
 use bevy::math::DVec3;
 
@@ -30,7 +31,7 @@ fn visible_times_ballistic(
                 //   t_emit + (r0 + c*t_emit)/c = t_recv
                 //   t_emit = (t_recv - r0/c)/2
                 vec![(t_recv - x0.length() / c) / 2.0]
-            } else if dangerously_close(v.angle_between(x0), 3.14159265358) {
+            } else if dangerously_close(v.angle_between(x0), PI) {
                 // println!("going speed of light towards receiver");
                 vec![x0.length() / c]
             } else {

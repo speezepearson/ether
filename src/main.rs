@@ -1,7 +1,4 @@
-use std::{
-    collections::VecDeque,
-    time::{Duration, Instant},
-};
+use std::collections::VecDeque;
 
 use bevy::{
     input::mouse::{MouseButtonInput, MouseWheel},
@@ -28,6 +25,8 @@ const ROCKET_RADIUS: f64 = 5.0;
 const SPEED_OF_LIGHT: f64 = 100.0;
 const WAGGLER_PERIOD_SEC: f64 = 3.0;
 const WAGGLER_MAX_SPEED: f64 = SPEED_OF_LIGHT * 5.0;
+
+type Timestamp = f64;
 
 fn main() {
     App::new()
@@ -70,18 +69,18 @@ fn dangerously_close(x: f64, y: f64) -> bool {
 }
 
 #[derive(Component)]
-pub struct Trajectory(VecDeque<(Instant, XV)>);
+pub struct Trajectory(VecDeque<(Timestamp, XV)>);
 
 impl Trajectory {
     fn current_xv(&self, time: &Time) -> XV {
-        let now = time.startup() + time.elapsed();
+        let now = time.elapsed_seconds_f64();
         let (last_t, last_xv) = self.0.back().unwrap();
         extrapolate_xv(last_t, last_xv, &now)
     }
 }
 
-fn extrapolate_xv(t0: &Instant, xv: &XV, t1: &Instant) -> XV {
-    let dt = (*t1 - *t0).as_secs_f64();
+fn extrapolate_xv(t0: &Timestamp, xv: &XV, t1: &Timestamp) -> XV {
+    let dt = t1 - t0;
     let x = xv.x + xv.v * dt;
     let v = xv.v;
     XV { x, v }
@@ -125,7 +124,7 @@ fn setup(
             acceleration: DVec3::ZERO,
         },
         Trajectory(VecDeque::from([(
-            time.startup(),
+            time.elapsed_seconds_f64(),
             XV {
                 x: DVec3::X * -100.0,
                 v: DVec3::ZERO,
@@ -147,7 +146,7 @@ fn setup(
         Planet,
         NoPhysics,
         Trajectory(VecDeque::from([(
-            time.startup(),
+            time.elapsed_seconds_f64(),
             XV {
                 x: planet_xv(0.0).x,
                 v: DVec3::ZERO,
@@ -202,7 +201,7 @@ fn planet_system(
     }
     let mut traj = planet_q.single_mut();
     let xv = planet_xv(time.elapsed().as_secs_f64());
-    traj.0.push_back((time.startup() + time.elapsed(), xv));
+    traj.0.push_back((time.elapsed_seconds_f64(), xv));
 }
 
 #[derive(Component)]
@@ -420,7 +419,7 @@ fn controls_system(
                     ..Default::default()
                 }),
                 Trajectory(VecDeque::from([(
-                    time.last_update().unwrap_or(time.startup()),
+                    time.elapsed_seconds_f64(),
                     XV {
                         x: player_xv.x + click_dir * (PLAYER_RADIUS + BULLET_RADIUS + 10.0),
                         v: SPEED_OF_LIGHT * click_dir,
@@ -447,7 +446,7 @@ fn controls_system(
                     ..Default::default()
                 }),
                 Trajectory(VecDeque::from([(
-                    time.last_update().unwrap_or(time.startup()),
+                    time.elapsed_seconds_f64(),
                     XV {
                         x: player_xv.x + click_dir * (PLAYER_RADIUS + ROCKET_RADIUS + 10.0),
                         v: player_xv.v + click_dir * 0.8 * SPEED_OF_LIGHT,
@@ -483,7 +482,7 @@ fn controls_system(
 fn physics_system(time: Res<Time>, mut trajectory_q: Query<(&Physics, &mut Trajectory)>) {
     for (physics, mut traj) in trajectory_q.iter_mut() {
         let (last_t, last_xv) = traj.0.back().unwrap();
-        let now = time.startup() + time.elapsed();
+        let now = time.elapsed_seconds_f64();
         if physics.acceleration != DVec3::ZERO {
             let new_xv = extrapolate_xv(last_t, last_xv, &now);
             traj.0.push_back((
@@ -526,7 +525,7 @@ fn vision_system(
 
     let (player_traj, player_appearance) = player_position_q.single();
 
-    let now = time.startup() + time.elapsed();
+    let now = time.elapsed_seconds_f64();
     let player_xv = player_traj.current_xv(&time);
     let player_bundle = player_appearance.0.clone();
     commands.spawn((
@@ -566,13 +565,10 @@ fn vision_system(
             //          -----a-----     --------b-------     -------c------
 
             let t_visibles = {
-                let (x0, v) = (
-                    x0.x - player_xv.x,
-                    (x1.x - x0.x) / (*t1 - *t0).as_secs_f64(),
-                );
+                let (x0, v) = (x0.x - player_xv.x, (x1.x - x0.x) / (t1 - t0));
                 let c = SPEED_OF_LIGHT;
-                let t_recv = (now - *t0).as_secs_f64();
-                let tmax = (*t1 - *t0).as_secs_f64();
+                let t_recv = now - t0;
+                let tmax = t1 - t0;
 
                 let qa = c.powi(2) - v.length_squared();
                 let qb = -2.0 * (c.powi(2) * t_recv + x0.dot(v));
@@ -631,7 +627,7 @@ fn vision_system(
                             -qa / qb,
                         );
                     }
-                    *t0 + Duration::from_secs_f64(t_emit)
+                    t0 + t_emit
                 }).collect::<Vec<_>>()
             };
 

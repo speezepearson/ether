@@ -5,6 +5,7 @@ use std::{
 
 use bevy::{
     input::mouse::{MouseButtonInput, MouseWheel},
+    math::DVec3,
     prelude::{
         info, shape, App, Assets, BuildChildren, Camera, Camera2d, Camera2dBundle, Color, Commands,
         Component, DefaultPlugins, Entity, EventReader, GlobalTransform, Handle, Input,
@@ -19,14 +20,14 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand_distr::{Distribution, Poisson};
 
-const PLAYER_ACCELERATION: f32 = 200.0;
-const PLAYER_RADIUS: f32 = 50.0;
-const PLANET_RADIUS: f32 = 10.0;
-const BULLET_RADIUS: f32 = 5.0;
-const ROCKET_RADIUS: f32 = 5.0;
-const SPEED_OF_LIGHT: f32 = 100.0;
-const WAGGLER_PERIOD_SEC: f32 = 3.0;
-const WAGGLER_MAX_SPEED: f32 = SPEED_OF_LIGHT * 5.0;
+const PLAYER_ACCELERATION: f64 = 200.0;
+const PLAYER_RADIUS: f64 = 50.0;
+const PLANET_RADIUS: f64 = 10.0;
+const BULLET_RADIUS: f64 = 5.0;
+const ROCKET_RADIUS: f64 = 5.0;
+const SPEED_OF_LIGHT: f64 = 100.0;
+const WAGGLER_PERIOD_SEC: f64 = 3.0;
+const WAGGLER_MAX_SPEED: f64 = SPEED_OF_LIGHT * 5.0;
 
 fn main() {
     App::new()
@@ -59,8 +60,13 @@ pub struct Player;
 
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
 struct XV {
-    x: Vec3,
-    v: Vec3,
+    x: DVec3,
+    v: DVec3,
+}
+
+fn dangerously_close(x: f64, y: f64) -> bool {
+    let kiloeps = 1000.0 * f64::EPSILON;
+    x * (1.0 - kiloeps) < y && y < x * (1.0 + kiloeps)
 }
 
 #[derive(Component)]
@@ -75,7 +81,7 @@ impl Trajectory {
 }
 
 fn extrapolate_xv(t0: &Instant, xv: &XV, t1: &Instant) -> XV {
-    let dt = (*t1 - *t0).as_secs_f32();
+    let dt = (*t1 - *t0).as_secs_f64();
     let x = xv.x + xv.v * dt;
     let v = xv.v;
     XV { x, v }
@@ -83,7 +89,7 @@ fn extrapolate_xv(t0: &Instant, xv: &XV, t1: &Instant) -> XV {
 
 #[derive(Component)]
 struct Physics {
-    acceleration: Vec3,
+    acceleration: DVec3,
 }
 
 #[derive(Component)]
@@ -116,13 +122,13 @@ fn setup(
     commands.spawn((
         Player,
         Physics {
-            acceleration: Vec3::ZERO,
+            acceleration: DVec3::ZERO,
         },
         Trajectory(VecDeque::from([(
             time.startup(),
             XV {
-                x: Vec3::X * -100.0,
-                v: Vec3::ZERO,
+                x: DVec3::X * -100.0,
+                v: DVec3::ZERO,
             },
         )])),
         Appearance(MaterialMesh2dBundle {
@@ -130,7 +136,7 @@ fn setup(
             material: materials.add(ColorMaterial::from(Color::rgb(0.0, 0.0, 1.0))),
             transform: Transform {
                 translation: Vec3::ZERO,
-                scale: Vec3::new(2.0 * PLAYER_RADIUS, 2.0 * PLAYER_RADIUS, 0.0),
+                scale: Vec3::new(2.0 * PLAYER_RADIUS as f32, 2.0 * PLAYER_RADIUS as f32, 0.0),
                 ..Default::default()
             },
             ..Default::default()
@@ -144,14 +150,14 @@ fn setup(
             time.startup(),
             XV {
                 x: planet_xv(0.0).x,
-                v: Vec3::ZERO,
+                v: DVec3::ZERO,
             },
         )])),
         Appearance(MaterialMesh2dBundle {
             mesh: circle_mesh.0.clone().into(),
             material: materials.add(ColorMaterial::from(Color::rgb(1.0, 0.0, 0.0))),
             transform: Transform {
-                scale: Vec3::new(2.0 * PLANET_RADIUS, 2.0 * PLANET_RADIUS, 0.0),
+                scale: Vec3::new(2.0 * PLANET_RADIUS as f32, 2.0 * PLANET_RADIUS as f32, 0.0),
                 ..Default::default()
             },
             ..Default::default()
@@ -171,14 +177,14 @@ struct RocketMaterial(Handle<ColorMaterial>);
 #[derive(Resource)]
 struct SquareMesh(Handle<Mesh>);
 
-fn planet_xv(t: f32) -> XV {
+fn planet_xv(t: f64) -> XV {
     let w = 2.0 * 3.14159 / WAGGLER_PERIOD_SEC;
     // x = (vmax / w) sin(w t)
     // v = vmax cos(w t)
     // a = -w vmax sin(w t)
     XV {
-        x: WAGGLER_MAX_SPEED / w * Vec3::new(t.cos(), t.sin(), 0.0),
-        v: WAGGLER_MAX_SPEED * 1.0 * Vec3::new(-t.sin(), t.cos(), 0.0),
+        x: WAGGLER_MAX_SPEED / w * DVec3::new(t.cos(), t.sin(), 0.0),
+        v: WAGGLER_MAX_SPEED * 1.0 * DVec3::new(-t.sin(), t.cos(), 0.0),
     }
 }
 
@@ -195,7 +201,7 @@ fn planet_system(
         return;
     }
     let mut traj = planet_q.single_mut();
-    let xv = planet_xv(time.elapsed().as_secs_f32());
+    let xv = planet_xv(time.elapsed().as_secs_f64());
     traj.0.push_back((time.startup() + time.elapsed(), xv));
 }
 
@@ -230,11 +236,11 @@ fn camera_follows_player_system(
     let player_traj = player_q.single();
     let cx = &mut camera_transform.translation;
     let px = player_traj.current_xv(&time).x;
-    cx.x = px.x;
-    cx.y = px.y;
+    cx.x = px.x as f32;
+    cx.y = px.y as f32;
 }
 
-fn get_world_cursor_posn(window: &Window, camera: (&Camera, &GlobalTransform)) -> Vec3 {
+fn get_world_cursor_posn(window: &Window, camera: (&Camera, &GlobalTransform)) -> DVec3 {
     let (camera, camera_transform) = camera;
 
     if let Some(world_position) = window
@@ -242,7 +248,7 @@ fn get_world_cursor_posn(window: &Window, camera: (&Camera, &GlobalTransform)) -
         .and_then(|cursor| camera.viewport_to_world(camera_transform, cursor))
         .map(|ray| ray.origin.truncate())
     {
-        return Vec3::new(world_position.x, world_position.y, 0.0);
+        return DVec3::new(world_position.x as f64, world_position.y as f64, 0.0);
     }
     panic!("No world coords");
 }
@@ -250,12 +256,12 @@ fn get_world_cursor_posn(window: &Window, camera: (&Camera, &GlobalTransform)) -
 mod dust {
     use std::collections::HashSet;
 
-    use bevy::prelude::SpatialBundle;
+    use bevy::prelude::{SpatialBundle, Vec3};
 
     use super::*;
 
     #[derive(Component)]
-    pub struct DustSpeck(Vec3);
+    pub struct DustSpeck(DVec3);
 
     #[derive(Component)]
     pub struct DustBlock(BlockId);
@@ -315,7 +321,8 @@ mod dust {
                             mesh: circle_mesh.0.clone().into(),
                             material: dust_material.0.clone().into(),
                             transform: Transform {
-                                translation: BLOCK_SIZE as f32 * Vec3::new(*x, *y, 0.5),
+                                translation: BLOCK_SIZE as f32
+                                    * Vec3::new(*x as f32, *y as f32, 0.5),
                                 scale: Vec3::new(2.0, 2.0, 0.0),
                                 ..Default::default()
                             },
@@ -328,19 +335,19 @@ mod dust {
 
     const BLOCK_SIZE: usize = 1000;
 
-    fn blocks(xmin: f32, xmax: f32, ymin: f32, ymax: f32) -> HashSet<BlockId> {
-        let left = (xmin / BLOCK_SIZE as f32).floor() as i32;
-        let right = (xmax / BLOCK_SIZE as f32).ceil() as i32;
-        let bottom = (ymin / BLOCK_SIZE as f32).floor() as i32;
-        let top = (ymax / BLOCK_SIZE as f32).ceil() as i32;
+    fn blocks(xmin: f64, xmax: f64, ymin: f64, ymax: f64) -> HashSet<BlockId> {
+        let left = (xmin / BLOCK_SIZE as f64).floor() as i32;
+        let right = (xmax / BLOCK_SIZE as f64).ceil() as i32;
+        let bottom = (ymin / BLOCK_SIZE as f64).floor() as i32;
+        let top = (ymax / BLOCK_SIZE as f64).ceil() as i32;
         (left..right)
             .flat_map(|x| (bottom..top).map(move |y| BlockId(x, y)))
             .collect()
     }
 
-    fn dust_in_block(ln_density: f32, block: &BlockId) -> Vec<(f32, f32)> {
+    fn dust_in_block(ln_density: f64, block: &BlockId) -> Vec<(f64, f64)> {
         let mut rng = rand::rngs::StdRng::seed_from_u64((6379 * block.0 + block.1) as u64);
-        let num_points = Poisson::new(BLOCK_SIZE.pow(2) as f32 * ln_density.exp())
+        let num_points = Poisson::new(BLOCK_SIZE.pow(2) as f64 * ln_density.exp())
             .unwrap()
             .sample(&mut rng) as usize;
         (0..num_points)
@@ -397,13 +404,17 @@ fn controls_system(
             commands.spawn((
                 Bullet,
                 Physics {
-                    acceleration: Vec3::ZERO,
+                    acceleration: DVec3::ZERO,
                 },
                 Appearance(MaterialMesh2dBundle {
                     mesh: circle_mesh.0.clone().into(),
                     material: bullet_material.0.clone().into(),
                     transform: Transform {
-                        scale: Vec3::new(2.0 * BULLET_RADIUS, 2.0 * BULLET_RADIUS, 0.0),
+                        scale: Vec3::new(
+                            2.0 * BULLET_RADIUS as f32,
+                            2.0 * BULLET_RADIUS as f32,
+                            0.0,
+                        ),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -420,13 +431,17 @@ fn controls_system(
             commands.spawn((
                 Rocket,
                 Physics {
-                    acceleration: Vec3::ZERO,
+                    acceleration: DVec3::ZERO,
                 },
                 Appearance(MaterialMesh2dBundle {
                     mesh: circle_mesh.0.clone().into(),
                     material: rocket_material.0.clone().into(),
                     transform: Transform {
-                        scale: Vec3::new(2.0 * ROCKET_RADIUS, 2.0 * ROCKET_RADIUS, 0.0),
+                        scale: Vec3::new(
+                            2.0 * ROCKET_RADIUS as f32,
+                            2.0 * ROCKET_RADIUS as f32,
+                            0.0,
+                        ),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -444,7 +459,7 @@ fn controls_system(
 
     let mut physics = player_physics_q.single_mut();
     physics.acceleration = PLAYER_ACCELERATION
-        * Vec3::new(
+        * DVec3::new(
             if keyboard_input.pressed(KeyCode::D) || keyboard_input.pressed(KeyCode::Right) {
                 1.0
             } else if keyboard_input.pressed(KeyCode::A) || keyboard_input.pressed(KeyCode::Left) {
@@ -462,20 +477,20 @@ fn controls_system(
             0.0,
         )
         .try_normalize()
-        .unwrap_or(Vec3::ZERO);
+        .unwrap_or(DVec3::ZERO);
 }
 
 fn physics_system(time: Res<Time>, mut trajectory_q: Query<(&Physics, &mut Trajectory)>) {
     for (physics, mut traj) in trajectory_q.iter_mut() {
         let (last_t, last_xv) = traj.0.back().unwrap();
         let now = time.startup() + time.elapsed();
-        if physics.acceleration != Vec3::ZERO {
+        if physics.acceleration != DVec3::ZERO {
             let new_xv = extrapolate_xv(last_t, last_xv, &now);
             traj.0.push_back((
                 now,
                 XV {
                     x: new_xv.x,
-                    v: new_xv.v + time.delta_seconds() * physics.acceleration,
+                    v: new_xv.v + time.delta_seconds_f64() * physics.acceleration,
                 },
             ));
         }
@@ -496,7 +511,7 @@ fn vision_system(
     player_position_q: Query<(&Trajectory, &Appearance), With<Player>>,
     square_mesh: Res<SquareMesh>,
     velocity_dot_material: Res<VelocityDotMaterial>,
-    mut object_q: Query<(&Trajectory, &Appearance)>,
+    mut object_q: Query<(&Trajectory, &Appearance), Without<Player>>,
     mut image_entity_q: Query<Entity, With<Image>>,
     mut commands: Commands,
     keyboard_input: Res<Input<KeyCode>>,
@@ -518,7 +533,7 @@ fn vision_system(
         Image,
         MaterialMesh2dBundle {
             transform: Transform {
-                translation: player_xv.x,
+                translation: player_xv.x.as_vec3(),
                 ..player_bundle.transform
             },
             ..player_bundle
@@ -542,51 +557,92 @@ fn vision_system(
             )
             .enumerate()
         {
-            let (dx0, dx1) = (player_xv.x - x0.x, player_xv.x - x1.x);
-            let (r0, r1) = (dx0.length(), dx1.length());
+            // r(t) = || x + vt ||
+            // want r(t) = c (T-t)
+            //      r(t)^2 = c^2 (T-t)^2
+            //      (x + vt)^2 = c^2 (T-t)^2
+            //      x^2 + 2 x.v t + v^2 t^2 = c^2 T^2 - 2 c^2 T t + c^2 t^2
+            //      0 = (c^2 - v^2) t^2 - 2(c^2 T + x.v) t + ((cT)^2 - x^2)
+            //          -----a-----     --------b-------     -------c------
 
-            let (dt0, dt1) = (now.duration_since(*t0), now.duration_since(*t1));
-            let (ct0, ct1) = (
-                SPEED_OF_LIGHT * dt0.as_secs_f32(),
-                SPEED_OF_LIGHT * dt1.as_secs_f32(),
-            );
+            let t_visibles = {
+                let (x0, v) = (
+                    x0.x - player_xv.x,
+                    (x1.x - x0.x) / (*t1 - *t0).as_secs_f64(),
+                );
+                let c = SPEED_OF_LIGHT;
+                let t_recv = (now - *t0).as_secs_f64();
+                let tmax = (*t1 - *t0).as_secs_f64();
 
-            if (r0 < ct0 && r1 > ct1) || (r0 > ct0 && r1 < ct1) {
-                if keyboard_input.pressed(KeyCode::ShiftLeft) {
-                    println!(
-                        "step {}: {}-{} visible from {} after {}-{}",
-                        i,
-                        x0.x,
-                        x1.x,
-                        player_xv.x,
-                        (now - *t1).as_secs_f32(),
-                        (now - *t0).as_secs_f32(),
-                    );
-                }
-
-                let mut min_tv = *t0;
-                let mut max_tv = *t1;
-                while (max_tv - min_tv).as_secs_f32() > 0.01 {
-                    let tm =
-                        min_tv + Duration::from_secs_f32((max_tv - min_tv).as_secs_f32() / 2.0);
-                    let xm = extrapolate_xv(t0, x0, &tm);
-                    let dxm = player_xv.x - xm.x;
-                    let rm = dxm.length();
-                    let ctm = SPEED_OF_LIGHT * (now - tm).as_secs_f32();
-                    if (r0 < ct0) == (rm < ctm) {
-                        min_tv = tm;
+                let qa = c.powi(2) - v.length_squared();
+                let qb = -2.0 * (c.powi(2) * t_recv + x0.dot(v));
+                let qc = (c * t_recv).powi(2) - x0.length_squared();
+                let t_emits = {
+                    if dangerously_close(c * t_recv, x0.length()) {
+                        // covers when qc is wrong because of floats
+                        // println!("object is visible at x0: {} ~= {}", x0.length(), c * t_recv);
+                        vec![0.0]
+                    } else if dangerously_close(c, v.length()) {
+                        // covers when qa is wrong because of floats
+                        // println!("basically going speed of light");
+                        if v.angle_between(x0).abs() < 0.00001 {
+                            // println!("going speed of light away");
+                            // emits photon at t_emit, at dist r0 + c*t_emit; received at t_recv
+                            //   t_emit + (r0 + c*t_emit)/c = t_recv
+                            //   t_emit = (t_recv - r0/c)/2
+                            vec![(t_recv - x0.length() / c) / 2.0]
+                        } else if dangerously_close(v.angle_between(x0), 3.14159265358) {
+                            // println!("going speed of light towards receiver");
+                            vec![x0.length() / c]
+                        } else {
+                            // println!("going speed of light in some non-special direction");
+                            vec![-qc / qb] // TODO: not well thought out
+                        }
                     } else {
-                        max_tv = tm;
+                        // qb might be wrong because of floats, but probably nbd because b/a is small? maybe?
+                        // println!("default case");
+                        if dangerously_close(qb.powi(2), 4.0 * qa * qc) {
+                            vec![-qb / (2.0 * qa)]
+                        } else if qb.powi(2) < 4.0 * qa * qc {
+                            vec![]
+                        } else {
+                            let sqrt = f64::sqrt(qb.powi(2) - 4.0 * qa * qc);
+                            [1, -1]
+                                .into_iter()
+                                .map(|sign| (-qb + sign as f64 * sqrt) / (2.0 * qa))
+                                .filter(|x| x.is_finite())
+                                .collect()
+                        }
                     }
-                }
+                };
 
-                let image_xv = extrapolate_xv(t0, x0, &min_tv);
+                t_emits.into_iter()
+                .filter(|t_emit| t_emit >= &0.0 && t_emit <= &tmax && t_emit < &t_recv)
+                .map(|t_emit| {
+                    let x_visible = x0 + v * t_emit;
+                    // println!("err: {}", (x_visible.length() - c * (t_recv - t_emit)).abs());
+                    if (x_visible.length() - c * (t_recv - t_emit)).abs() > c * 1.0 {
+                        println!(
+                            "thought x{x0} v{v} emitted photons at ({t_emit}, {x_visible}) visible from origin at {t_recv}, but then x = {} where c dt = {}\n a = {qa}, b = {qb}, c = {qc}\n -b/2a = {}\n b^2 - 4ac = {}\n -c/b = {}",
+                            x_visible.length(),
+                            c * (t_recv - t_emit),
+                            -qb/(2.0*qa),
+                            qb.powi(2) - 4.0 * qa * qc,
+                            -qa / qb,
+                        );
+                    }
+                    *t0 + Duration::from_secs_f64(t_emit)
+                }).collect::<Vec<_>>()
+            };
+
+            for t in t_visibles {
+                let image_xv = extrapolate_xv(t0, x0, &t);
 
                 let object_bundle = appearance.0.clone();
                 commands
                     .spawn(SpriteBundle {
                         transform: Transform {
-                            translation: image_xv.x,
+                            translation: image_xv.x.as_vec3(),
                             ..Default::default()
                         },
                         ..Default::default()
@@ -615,12 +671,12 @@ fn vision_system(
 }
 
 fn make_line(
-    vec: Vec3,
+    vec: DVec3,
     square_mesh: &SquareMesh,
     material: &Handle<ColorMaterial>,
 ) -> MaterialMesh2dBundle<ColorMaterial> {
-    let theta = vec.y.atan2(vec.x);
-    let xscale = 0.2 * vec.length();
+    let theta = vec.y.atan2(vec.x) as f32;
+    let xscale = 0.2 * vec.length() as f32;
     MaterialMesh2dBundle {
         mesh: square_mesh.0.clone().into(),
         material: material.clone(),
@@ -654,7 +710,7 @@ fn debug_vision_system(
             MaterialMesh2dBundle {
                 material: materials.add(ColorMaterial::from(Color::rgba(0.5, 0.5, 0.5, 0.5))),
                 transform: Transform {
-                    translation: position.current_xv(&time).x + Vec3::Z,
+                    translation: position.current_xv(&time).x.as_vec3() + Vec3::Z,
                     ..bundle.transform
                 },
                 ..bundle

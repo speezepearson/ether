@@ -1,3 +1,6 @@
+mod core;
+mod vision;
+
 use std::collections::VecDeque;
 
 use bevy::{
@@ -17,16 +20,16 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand_distr::{Distribution, Poisson};
 
+use crate::core::{extrapolate_xv, Timestamp, SPEED_OF_LIGHT, XV};
+use crate::vision::find_images;
+
 const PLAYER_ACCELERATION: f64 = 200.0;
 const PLAYER_RADIUS: f64 = 50.0;
 const PLANET_RADIUS: f64 = 10.0;
 const BULLET_RADIUS: f64 = 5.0;
 const ROCKET_RADIUS: f64 = 5.0;
-const SPEED_OF_LIGHT: f64 = 100.0;
 const WAGGLER_PERIOD_SEC: f64 = 3.0;
 const WAGGLER_MAX_SPEED: f64 = SPEED_OF_LIGHT * 5.0;
-
-type Timestamp = f64;
 
 fn main() {
     App::new()
@@ -57,17 +60,6 @@ struct PhysicsTimer(Timer);
 #[derive(Component)]
 pub struct Player;
 
-#[derive(Component, Clone, Copy, PartialEq, Debug)]
-struct XV {
-    x: DVec3,
-    v: DVec3,
-}
-
-fn dangerously_close(x: f64, y: f64) -> bool {
-    let kiloeps = 1000.0 * f64::EPSILON;
-    x * (1.0 - kiloeps) < y && y < x * (1.0 + kiloeps)
-}
-
 #[derive(Component)]
 pub struct Trajectory(VecDeque<(Timestamp, XV)>);
 
@@ -77,13 +69,6 @@ impl Trajectory {
         let (last_t, last_xv) = self.0.back().unwrap();
         extrapolate_xv(last_t, last_xv, &now)
     }
-}
-
-fn extrapolate_xv(t0: &Timestamp, xv: &XV, t1: &Timestamp) -> XV {
-    let dt = t1 - t0;
-    let x = xv.x + xv.v * dt;
-    let v = xv.v;
-    XV { x, v }
 }
 
 #[derive(Component)]
@@ -542,126 +527,35 @@ fn vision_system(
         if keyboard_input.pressed(KeyCode::ShiftLeft) {
             println!("");
         }
-        // find when, if ever, the object was visible, i.e. when (its distance from player_position) = SPEED_OF_LIGHT*(time ago)
-        for (i, ((t0, x0), (t1, x1))) in traj
-            .0
-            .iter()
-            .zip(
-                traj.0.iter().skip(1).chain(
-                    traj.0
-                        .back()
-                        .map(|(t, xv)| (now, extrapolate_xv(t, xv, &now)))
-                        .iter(),
-                ),
-            )
-            .enumerate()
-        {
-            // r(t) = || x + vt ||
-            // want r(t) = c (T-t)
-            //      r(t)^2 = c^2 (T-t)^2
-            //      (x + vt)^2 = c^2 (T-t)^2
-            //      x^2 + 2 x.v t + v^2 t^2 = c^2 T^2 - 2 c^2 T t + c^2 t^2
-            //      0 = (c^2 - v^2) t^2 - 2(c^2 T + x.v) t + ((cT)^2 - x^2)
-            //          -----a-----     --------b-------     -------c------
 
-            let t_visibles = {
-                let (x0, v) = (x0.x - player_xv.x, (x1.x - x0.x) / (t1 - t0));
-                let c = SPEED_OF_LIGHT;
-                let t_recv = now - t0;
-                let tmax = t1 - t0;
-
-                let qa = c.powi(2) - v.length_squared();
-                let qb = -2.0 * (c.powi(2) * t_recv + x0.dot(v));
-                let qc = (c * t_recv).powi(2) - x0.length_squared();
-                let t_emits = {
-                    if dangerously_close(c * t_recv, x0.length()) {
-                        // covers when qc is wrong because of floats
-                        // println!("object is visible at x0: {} ~= {}", x0.length(), c * t_recv);
-                        vec![0.0]
-                    } else if dangerously_close(c, v.length()) {
-                        // covers when qa is wrong because of floats
-                        // println!("basically going speed of light");
-                        if v.angle_between(x0).abs() < 0.00001 {
-                            // println!("going speed of light away");
-                            // emits photon at t_emit, at dist r0 + c*t_emit; received at t_recv
-                            //   t_emit + (r0 + c*t_emit)/c = t_recv
-                            //   t_emit = (t_recv - r0/c)/2
-                            vec![(t_recv - x0.length() / c) / 2.0]
-                        } else if dangerously_close(v.angle_between(x0), 3.14159265358) {
-                            // println!("going speed of light towards receiver");
-                            vec![x0.length() / c]
-                        } else {
-                            // println!("going speed of light in some non-special direction");
-                            vec![-qc / qb] // TODO: not well thought out
-                        }
-                    } else {
-                        // qb might be wrong because of floats, but probably nbd because b/a is small? maybe?
-                        // println!("default case");
-                        if dangerously_close(qb.powi(2), 4.0 * qa * qc) {
-                            vec![-qb / (2.0 * qa)]
-                        } else if qb.powi(2) < 4.0 * qa * qc {
-                            vec![]
-                        } else {
-                            let sqrt = f64::sqrt(qb.powi(2) - 4.0 * qa * qc);
-                            [1, -1]
-                                .into_iter()
-                                .map(|sign| (-qb + sign as f64 * sqrt) / (2.0 * qa))
-                                .filter(|x| x.is_finite())
-                                .collect()
-                        }
-                    }
-                };
-
-                t_emits.into_iter()
-                .filter(|t_emit| t_emit >= &0.0 && t_emit <= &tmax && t_emit < &t_recv)
-                .map(|t_emit| {
-                    let x_visible = x0 + v * t_emit;
-                    // println!("err: {}", (x_visible.length() - c * (t_recv - t_emit)).abs());
-                    if (x_visible.length() - c * (t_recv - t_emit)).abs() > c * 1.0 {
-                        println!(
-                            "thought x{x0} v{v} emitted photons at ({t_emit}, {x_visible}) visible from origin at {t_recv}, but then x = {} where c dt = {}\n a = {qa}, b = {qb}, c = {qc}\n -b/2a = {}\n b^2 - 4ac = {}\n -c/b = {}",
-                            x_visible.length(),
-                            c * (t_recv - t_emit),
-                            -qb/(2.0*qa),
-                            qb.powi(2) - 4.0 * qa * qc,
-                            -qa / qb,
-                        );
-                    }
-                    t0 + t_emit
-                }).collect::<Vec<_>>()
-            };
-
-            for t in t_visibles {
-                let image_xv = extrapolate_xv(t0, x0, &t);
-
-                let object_bundle = appearance.0.clone();
-                commands
-                    .spawn(SpriteBundle {
-                        transform: Transform {
-                            translation: image_xv.x.as_vec3(),
-                            ..Default::default()
-                        },
+        for image in find_images(player_xv.x, now, &traj.0) {
+            let object_bundle = appearance.0.clone();
+            commands
+                .spawn(SpriteBundle {
+                    transform: Transform {
+                        translation: image.1.x.as_vec3(),
                         ..Default::default()
-                    })
-                    .with_children(|parent| {
+                    },
+                    ..Default::default()
+                })
+                .with_children(|parent| {
+                    parent.spawn((
+                        Image,
+                        MaterialMesh2dBundle {
+                            transform: Transform {
+                                translation: Vec3::ZERO,
+                                ..object_bundle.transform
+                            },
+                            ..object_bundle.clone()
+                        },
+                    ));
+                    if image.1.v.length() > 1.0 {
                         parent.spawn((
                             Image,
-                            MaterialMesh2dBundle {
-                                transform: Transform {
-                                    translation: Vec3::ZERO,
-                                    ..object_bundle.transform
-                                },
-                                ..object_bundle.clone()
-                            },
+                            make_line(image.1.v, &square_mesh, &velocity_dot_material.0),
                         ));
-                        if image_xv.v.length() > 1.0 {
-                            parent.spawn((
-                                Image,
-                                make_line(image_xv.v, &square_mesh, &velocity_dot_material.0),
-                            ));
-                        }
-                    });
-            }
+                    }
+                });
         }
     }
 }

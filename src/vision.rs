@@ -98,3 +98,82 @@ pub fn find_images(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_approx_f64(a: f64, b: f64) {
+        assert!(
+            (a - b).abs() < 0.0000000000001,
+            "assertion failed: {} !~= {}",
+            a,
+            b
+        );
+    }
+
+    #[test]
+    fn test_visible_times_ballistic_handles_departing_laser() {
+        let actual = visible_times_ballistic(
+            DVec3::ZERO,
+            1.0,
+            (
+                0.0,
+                XV {
+                    x: DVec3::ZERO,
+                    v: SPEED_OF_LIGHT * DVec3::X,
+                },
+            ),
+        );
+        assert_eq!(actual.len(), 1);
+        assert_approx_f64(actual[0], 0.5);
+    }
+
+    #[test]
+    fn test_visible_times_ballistic_does_not_show_incoming_laser() {
+        let actual = visible_times_ballistic(
+            DVec3::ZERO,
+            1.0,
+            (
+                0.0,
+                XV {
+                    x: 2.0 * SPEED_OF_LIGHT * DVec3::X,
+                    v: SPEED_OF_LIGHT * -DVec3::X,
+                },
+            ),
+        );
+        assert_eq!(actual.len(), 0);
+    }
+
+    #[test]
+    fn test_visible_times_ballistic_does_not_show_distant_tangential_laser() {
+        let actual = visible_times_ballistic(
+            DVec3::ZERO,
+            10.0,
+            (
+                0.0,
+                XV {
+                    x: 100.0 * SPEED_OF_LIGHT * -DVec3::X + DVec3::Y,
+                    v: SPEED_OF_LIGHT * DVec3::X,
+                },
+            ),
+        );
+        assert_eq!(actual.len(), 0);
+    }
+
+    #[test]
+    fn test_visible_times_ballistic_shows_single_point_for_random_subminal_object() {
+        let actual = visible_times_ballistic(
+            DVec3::ZERO,
+            0.0,
+            (
+                0.0,
+                XV {
+                    x: DVec3::X + DVec3::Y,
+                    v: (SPEED_OF_LIGHT / 2.0) * DVec3::X,
+                },
+            ),
+        );
+        assert_eq!(actual.len(), 1);
+    }
+}
